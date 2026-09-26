@@ -1,0 +1,19 @@
+name = "getbili"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# 是否允许跨域访问（默认 "true"）。部署后如需收紧，改成具体域名，如 "https://example.com"
+[vars]
+CORS_ORIGIN = "*"
+# 默认请求超时（毫秒）
+REQUEST_TIMEOUT_MS = "15000"
+
+# 未登录时使用 try_look=1 预览高清晰度（B 站行为），默认开启
+TRY_LOOK = "true"
+
+# 登录态 Cookie 请勿写在这里（会进版本库）。
+# 本地开发： 写入 .dev.vars 文件 -> BILI_COOKIE="SESSDATA=xxx; bili_jct=xxx"
+# 线上部署： pnpm exec wrangler secret put BILI_COOKIE
+
+[observability]
+enabled = true

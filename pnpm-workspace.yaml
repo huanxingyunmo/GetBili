@@ -1,0 +1,6 @@
+allowBuilds:
+  esbuild: false
+  workerd: false
+  sharp: false
+
+nodeLinker: hoisted

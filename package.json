@@ -1,0 +1,27 @@
+{
+  "name": "getbili",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Workers API service for Bilibili video info, play URLs, danmaku and more",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/md5-check.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "debug:upstream": "esbuild scripts/debug-upstream.ts --bundle --format=esm --platform=node --target=node20 --outfile=.tmp/debug-upstream.mjs && node .tmp/debug-upstream.mjs",
+    "check": "pnpm run typecheck && pnpm run test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "hono": "^4.13.9"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260925.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.140.0"
+  }
+}
