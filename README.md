@@ -1,6 +1,6 @@
 # GetBili — 哔哩哔哩信息 API 服务
 
-基于 **Cloudflare Workers + Hono 4 + TypeScript** 的哔哩哔哩（Bilibili）信息聚合接口服务。通过统一的 HTTP 接口获取视频详情、DASH 播放直链、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹，全部接口返回统一 JSON 信封。
+基于 **Hono 4 + TypeScript** 的哔哩哔哩（Bilibili）信息聚合接口服务，主部署目标为 **Vercel Edge Functions**（亦兼容 Cloudflare Workers）。通过统一的 HTTP 接口获取视频详情、DASH 播放直链、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹，全部接口返回统一 JSON 信封。
 
 > 本项目只做「信息读取 + 地址解析」，不代理、不转发、不缓存任何音视频与图片资源。播放地址直接返回 B 站 CDN 直链，由调用方自行访问。
 
@@ -101,26 +101,42 @@ GetBili/
 
 ```bash
 pnpm install
-pnpm dev            # 本地预览，默认 http://127.0.0.1:8787
+pnpm dev            # 本地预览（Node 直跑 Hono），默认 http://127.0.0.1:8787
 ```
+
+本地开发环境变量写入 `.dev.vars`（`KEY=VALUE` 行，dev 启动时自动加载，已在 `.gitignore` 中）：`BILI_COOKIE`、`ADMIN_TOKEN` 等。
 
 启动后访问 `http://127.0.0.1:8787/` —— 未登录时**伪装成 Cloudflare 404 错误页**（这是预期行为，用于隐藏服务存在）。用 `ADMIN_TOKEN` 登录 `/adm` 后，`/`、`/api`、`/ui` 才会正常展示。
 
-### 部署到 Cloudflare
+### 部署到 Vercel（推荐，当前主部署方式）
 
 ```bash
-# 首次部署前先登录（会打开浏览器完成授权）
-pnpm exec wrangler login
+# 方式一：CLI（首次会引导登录并关联项目）
+npx -y vercel link
+npx -y vercel env add ADMIN_TOKEN production    # 管理后台令牌
+npx -y vercel env add BILI_COOKIE production    # 可选：B 站登录态
+pnpm deploy                                     # = npx vercel --prod
 
-# 创建接口策略存储的 KV namespace，并把返回的 id 回填到 wrangler.toml 的 POLICY_KV
-pnpm exec wrangler kv namespace create POLICY_KV
-
-# 部署
-pnpm deploy
-
-# 配置管理后台令牌（未配置则 /adm 显示「后台未启用」）
-pnpm exec wrangler secret put ADMIN_TOKEN
+# 方式二：GitHub 集成 —— 在 vercel.com 导入仓库，环境变量在项目 Settings → Environment Variables 配置
 ```
+
+**必须配置的环境变量**（本地 `.dev.vars` 的等价物，线上在平台配置，勿写进仓库）：
+
+| 变量 | 说明 |
+| --- | --- |
+| `ADMIN_TOKEN` | `/adm` 管理后台令牌 |
+| `BILI_COOKIE` | 可选：B 站登录态 Cookie（`SESSDATA=xxx; bili_jct=xxx`） |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | 可选：接口策略的持久化存储（Vercel KV / Upstash REST）。不配则策略仅存于实例内存，多实例/冷启动会漂移 |
+
+> 注意：Vercel（及一切 serverless 平台）的出口 IP 同样是数据中心段，B 站 IP 级风控是否放行需实测——若线上接口持续返回 `-412 request was banned`，请配置下文的「出口代理」。
+
+### 部署到 Cloudflare Workers（备用，历史方式）
+
+```bash
+pnpm deploy:cf    # = wrangler deploy（需要 wrangler.toml 的 KV id 与 wrangler secret）
+```
+
+`wrangler.toml` 与 `POLICY_KV` 绑定保留以支持此方式；两平台的差异由 `src/lib/policy.ts` 的多后端抽象抹平。
 
 ### 配置登录态（可选，但强烈建议）
 
@@ -142,18 +158,20 @@ pnpm exec wrangler secret put BILI_COOKIE
 
 ### 环境变量
 
-`wrangler.toml` 的 `[vars]` 与 secrets：
+环境变量（本地写 `.dev.vars`，线上在平台配置——Vercel Settings → Environment Variables / Cloudflare secrets）：
 
 | 变量名 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `CORS_ORIGIN` | 普通变量 | `"*"` | 允许的跨域来源，支持逗号分隔白名单 |
 | `REQUEST_TIMEOUT_MS` | 普通变量 | `"15000"` | 上游请求超时（毫秒） |
 | `TRY_LOOK` | 普通变量 | `"true"` | 未登录时附加 `try_look=1` 以预览更高清晰度 |
-| `ADMIN_TOKEN` | **secret** | 无 | `/adm` 管理后台令牌；配置后启用登录、`/ui` 与首页门槛、接口策略管理。**不要写进 `wrangler.toml`** |
-| `BILI_COOKIE` | **secret** | 无 | 登录态 Cookie，**不要写进 `wrangler.toml`** |
-| `BILI_UA` | secret / 变量 | 内置 Chrome UA | 自定义 User-Agent |
+| `UPSTREAM_PROXY_BASE` | 普通变量 | 无 | 可选：上游出口代理基址（见「出口代理」章节） |
+| `ADMIN_TOKEN` | **敏感** | 无 | `/adm` 管理后台令牌；配置后启用登录、`/ui` 与首页门槛、接口策略管理。**勿提交进仓库** |
+| `BILI_COOKIE` | **敏感** | 无 | 登录态 Cookie，**勿提交进仓库** |
+| `BILI_UA` | 普通变量 | 内置 Chrome UA | 自定义 User-Agent |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | 普通变量 + **敏感** | 无 | 可选：接口策略持久化（Vercel KV / Upstash REST 协议）；不配则策略存实例内存 |
 
-KV 绑定：`POLICY_KV`（接口公开策略存储，本地 dev 由 wrangler 自动模拟，无需真实 id；线上部署前需 `wrangler kv namespace create POLICY_KV` 并回填 id 到 `wrangler.toml`）。
+Cloudflare Workers 专用：`POLICY_KV`（KV namespace 绑定，见 `wrangler.toml`）。
 
 ---
 
@@ -249,6 +267,41 @@ ADMIN_TOKEN=dev-admin-token
 
 ---
 
+## 出口代理（线上部署强烈建议阅读）
+
+**已知平台限制**：B 站对数据中心 IP 做 IP 级风控——**Cloudflare Workers、Vercel 等 serverless 平台的出口段**都可能被覆盖（已实测：Workers 出口被全线 `-412 request was banned`；Vercel 部署后需实测）。本地 `pnpm dev` 走家宽 IP 一切正常。这与是否配置 `BILI_COOKIE` 无关，IP 封禁先于账号验证。若线上接口持续被 ban，缓解方式如下。
+
+**缓解方式**：配置环境变量 `UPSTREAM_PROXY_BASE`（普通变量，写在 `wrangler.toml` 的 `[vars]`），指向一台**住宅/国内 IP** 的反向代理，所有上游请求会被重写到该地址（请求头、Cookie、WBI 签名全部保持不变，代理不理解任何业务）。
+
+代理端（nginx）最小配置示例——关键是把 Host/SNI 指回真实 B 站域名：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name bili-proxy.example.com;   # 换成你的域名
+    # ssl_certificate / ssl_certificate_key 略
+
+    location / {
+        proxy_pass https://api.bilibili.com;
+        proxy_ssl_server_name on;
+        proxy_ssl_name api.bilibili.com;
+        proxy_set_header Host api.bilibili.com;
+        # 透传客户端带来的其余请求头（UA / Referer / Cookie 由 Worker 侧发送）
+        proxy_pass_request_headers on;
+    }
+}
+```
+
+然后在平台配置并重新部署（Vercel：Settings → Environment Variables 或 `vercel env add UPSTREAM_PROXY_BASE`；Cloudflare：`wrangler.toml` 的 `[vars]`）：
+
+```ini
+UPSTREAM_PROXY_BASE = "https://bili-proxy.example.com"
+```
+
+> 代理机器的 IP 质量直接决定效果：家宽 / 国内 VPS 通常可用；再套一层 Cloudflare（橙云）则出口仍是数据中心 IP，无效。若没有干净出口机器，业务接口在线上将持续 429（伪装页、登录、策略管理等非上游功能不受影响）。
+
+---
+
 ## 已知限制
 
 以下限制均为实测确认，在使用前请知悉。
@@ -286,12 +339,14 @@ ADMIN_TOKEN=dev-admin-token
 
 | 脚本 | 命令 | 说明 |
 | --- | --- | --- |
-| `pnpm dev` | `wrangler dev` | 本地预览，默认 `http://127.0.0.1:8787` |
+| `pnpm dev` | `tsx scripts/dev-node.ts` | 本地预览（Node 直跑 Hono），默认 `http://127.0.0.1:8787` |
 | `pnpm typecheck` | `tsc --noEmit` | TypeScript 类型检查 |
 | `pnpm test` | `node scripts/md5-check.mjs` | MD5 回归测试（RFC 1321 官方向量） |
 | `pnpm smoke` | `node scripts/smoke.mjs` | 全接口冒烟测试（**需先起 `pnpm dev`**） |
+| `pnpm ui:check` | `node scripts/ui-check.mjs` | 内联页面离线检查（28 项，无需起服务） |
 | `pnpm debug:upstream` | esbuild 打包后运行 | 直接打上游看原始响应，排查字段映射 |
-| `pnpm deploy` | `wrangler deploy` | 部署到 Cloudflare |
+| `pnpm deploy` | `npx vercel --prod` | 部署到 Vercel（主方式） |
+| `pnpm deploy:cf` | `wrangler deploy` | 部署到 Cloudflare Workers（备用） |
 | `pnpm check` | `typecheck && test` | 类型检查 + 单测 |
 
 冒烟测试默认请求 `http://127.0.0.1:8787`，可通过环境变量切换：

@@ -3,7 +3,14 @@
  * 修改此文件前请先确认所有引用方，任意字段变更都属于破坏性变更。
  */
 
-/** Worker 环境变量绑定（见 wrangler.toml / .dev.vars） */
+/**
+ * 环境变量绑定。
+ *
+ * 兼容两种运行时：
+ * - Cloudflare Workers：绑定来自 wrangler.toml / .dev.vars（POLICY_KV 是 KV namespace 绑定对象）
+ * - Vercel Edge Functions：全部来自平台环境变量（process.env），无 KV 绑定对象，
+ *   策略存储用 KV_REST_API_URL / KV_REST_API_TOKEN（Vercel KV / Upstash REST 协议）或内存兜底
+ */
 export interface Env {
   /** 可选：B 站登录态 Cookie 串，如 "SESSDATA=xxx; bili_jct=xxx" */
   BILI_COOKIE?: string;
@@ -18,11 +25,27 @@ export interface Env {
   /**
    * /adm 管理后台令牌。配置后启用：/adm 登录、/ui 与首页自描述的登录门槛、
    * 接口公开策略管理。未配置时 /adm 显示「后台未启用」，但伪装与策略仍生效。
-   * 本地写入 .dev.vars；线上用 `wrangler secret put ADMIN_TOKEN`。
+   * 本地写入 .dev.vars；线上在平台环境变量中配置（Cloudflare secret / Vercel env）。
    */
   ADMIN_TOKEN?: string;
-  /** 接口公开策略存储（KV namespace 绑定）。未绑定时所有接口按默认公开处理 */
+  /** 接口公开策略存储（Cloudflare KV namespace 绑定，仅 Workers 部署使用）。未绑定时回退其他后端 */
   POLICY_KV?: KVNamespace;
+  /**
+   * 可选：策略存储的 Upstash REST 地址（Vercel KV 即此协议，如 https://xxx.upstash.io）。
+   * 与 KV_REST_API_TOKEN 同时配置时，策略跨实例持久；均未配置时退化为实例内存
+   * （serverless 多实例/冷启动会漂移，个人使用可接受，生产建议配置）。
+   */
+  KV_REST_API_URL?: string;
+  /** Upstash REST 访问令牌（与 KV_REST_API_URL 配套） */
+  KV_REST_API_TOKEN?: string;
+  /**
+   * 可选：上游出口代理基址（如 https://bili-proxy.example.com）。
+   * 背景：B 站对数据中心 IP（Cloudflare Workers / Vercel 等 serverless 出口段）做 IP 级
+   * 风控（-412 request was banned），配置后所有 B 站上游请求会被重写到该地址，
+   * 由一台住宅/国内 IP 的反向代理代发。
+   * 未配置时直连 api.bilibili.com（本地 dev 场景，家宽 IP 可直连）。
+   */
+  UPSTREAM_PROXY_BASE?: string;
 }
 
 /** B 站通用响应信封 */

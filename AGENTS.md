@@ -1,15 +1,15 @@
 # Project: GetBili
 
-哔哩哔哩（Bilibili）信息 API 服务：运行在 Cloudflare Workers 上，通过 HTTP 接口获取视频详情、播放地址（DASH 直链）、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹。
+哔哩哔哩（Bilibili）信息 API 服务：主部署目标为 **Vercel Edge Functions**（兼容 Cloudflare Workers），通过 HTTP 接口获取视频详情、播放地址（DASH 直链）、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹。
 
 服务本身不代理视频流量，只返回结构化元数据与可直连的流地址。
 
 ## 技术栈
 
-- 语言/运行时：TypeScript 5/7 + Cloudflare Workers（workerd）
+- 语言/运行时：TypeScript 5/7；主运行时 **Vercel Edge Functions**（Web 标准 API：crypto.subtle / AbortSignal.timeout / fetch），兼容 Cloudflare Workers（workerd）
 - 框架/核心库：Hono 4（路由）、零运行时依赖（WBI 签名、设备指纹、protobuf 弹幕解析全部自实现）
-- 构建/包管理：pnpm 11 + wrangler 4（esbuild 由 wrangler 内置）
-- 测试：`node scripts/md5-check.mjs`（MD5 回归）+ `node scripts/smoke.mjs`（全接口真实上游冒烟）
+- 构建/包管理：pnpm 11；本地开发用 `tsx`（Node 直跑）+ `@hono/node-server`；部署 Vercel 用 `vercel` CLI / GitHub 集成，Cloudflare 用 wrangler 4
+- 测试：`node scripts/md5-check.mjs`（MD5 回归）+ `node scripts/smoke.mjs`（全接口真实上游冒烟）+ `scripts/ui-check.mjs`（内联页面离线检查）
 - 参考项目：`D:\projects\python\BiLiganbei`（Python/PySide6 下载器，本项目的接口逻辑与风控策略参照它实现）
 
 ## 项目结构
@@ -47,15 +47,18 @@
 
 ```bash
 pnpm install          # 安装依赖（见下方「pnpm 安装」注意事项）
-pnpm dev              # 本地预览，默认 http://127.0.0.1:8787
+pnpm dev              # 本地预览：Node 直跑 Hono（tsx scripts/dev-node.ts），默认 http://127.0.0.1:8787
 pnpm typecheck        # tsc --noEmit，必须为 0 错误
 pnpm test             # MD5 回归测试
 pnpm smoke            # 全接口冒烟（需先起 pnpm dev）
+pnpm ui:check         # 内联页面离线检查（28 项）
 pnpm debug:upstream   # 直接打上游看原始响应
-pnpm deploy           # 部署到 Cloudflare
+pnpm deploy           # 部署到 Vercel（npx vercel --prod）
+pnpm deploy:cf        # 部署到 Cloudflare Workers（备用）
 ```
 
-- 配置登录态：本地写 `.dev.vars`（`BILI_COOKIE="SESSDATA=xxx; bili_jct=xxx"`），线上 `pnpm exec wrangler secret put BILI_COOKIE`
+- 本地环境变量：`.dev.vars`（`KEY=VALUE` 行），dev-node.ts 启动时自动加载（等价 wrangler dev 的行为），BILI_COOKIE / ADMIN_TOKEN 都在这里
+- 线上环境变量（两平台一致）：`ADMIN_TOKEN`、`BILI_COOKIE`、可选 `KV_REST_API_URL/KV_REST_API_TOKEN`（策略持久化）、可选 `UPSTREAM_PROXY_BASE`（出口代理）
 - 代码约定：
   - 所有上游请求必须经 `src/lib/request.ts`，不要在业务模块里直接 `fetch`（会丢 Referer/UA 导致 -412 风控）
   - 错误统一抛 `BiliError`，HTTP 状态码只由 `biliCodeToStatus` 决定；不要在业务层硬编码状态码
@@ -166,6 +169,15 @@ B 站风控有**两类**「伪成功」响应，都会让调用方拿到看起�
 - **测试**：smoke 38 项（含 11 项访问控制断言 + 策略闭环 try/finally 恢复现场）、ui-check 28 项（ui 12 + adm 12 + disguise 4）、e2e 15 项（浏览器内 fetch 登录后 cookie 自动落 jar）。冒烟测试从 `.dev.vars` 解析 ADMIN_TOKEN，不读 BILI_COOKIE 进变量。
 
 **内联页面三约定（血泪教训，三个页面都适用）**：整页 HTML 是一个模板字面量导出；内层 JS 禁止嵌套模板字面量与一切反斜杠（正则、`\n`、转义引号全不行）；动态文本一律 `textContent`/`createTextNode` 禁止 `innerHTML`。离线检查由 `scripts/ui-check.mjs` 把关（含 `vm.Script` 语法解析），违反约定的代码过不了它。
+
+### 平台适配：Vercel Edge（2026-09-30 切换，主部署方式）
+
+- **入口**：`api/index.ts`（`export const config = { runtime: 'edge' }`）+ `vercel.json` 的 rewrites `/(.*) → /api/index`。**rewrite 保留原始 URL**，Hono 拿到的是浏览器请求路径，直接路由 /、/ui、/adm、/api/*。
+- **c.env 的关键差异**：Workers 平台 env 来自绑定对象；Hono 的 `app.fetch(req, env)` 第二参即 c.env。Vercel 的 handle 不传 env，所以入口里显式 `app.fetch(req, process.env)`——**所有 c.env.XXX 在两平台行为一致**。
+- **类型环境**：tsconfig types 只有 @cloudflare/workers-types（不引 @types/node 避免全局类型冲突）。因此 api/index.ts 里 `process` 用局部 declare；`scripts/dev-node.ts` 用了 node:fs，**故意不进 tsconfig include**（tsx 只转译不查类型，运行无碍）。
+- **策略存储三后端抽象**（src/lib/policy.ts）：Upstash REST（`KV_REST_API_URL/KV_REST_API_TOKEN`，Vercel KV 即此协议）> Cloudflare KV（POLICY_KV，仅 Workers）> 实例内存兜底。内存兜底下策略在 serverless 多实例/冷启动会漂移——个人用可接受，生产配 Upstash。
+- **本地开发**：`pnpm dev` = `tsx scripts/dev-node.ts`（@hono/node-server），启动时读 `.dev.vars` 注入 process.env（KEY=VALUE，剥引号），与 wrangler dev 行为等价；smoke 38 项在该模式下全绿。
+- **Vercel 出口 IP 同样是数据中心段**（AWS），B 站风控是否放行需部署后实测；被 ban 时配 `UPSTREAM_PROXY_BASE` 出口代理（README 有 nginx 配置示例），该机制平台无关。
 
 ### 其他约定
 

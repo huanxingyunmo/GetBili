@@ -12,13 +12,14 @@
  *
  * 结果缓存在模块作用域（Workers 实例复用时可跨请求生效）。
  *
- * 依赖说明：只依赖 types（纯类型）与 md5（叶子模块，无任何 import），
- * 不 import ./request —— 否则会与 request.ts（它需要 import 本模块）形成循环依赖。
- * 因此 UA 由调用方以参数传入。
+ * 依赖说明：只依赖 types（纯类型）、md5（叶子模块）与 upstream（叶子模块，
+ * 提供 URL 重写）。不 import ./request —— 否则会与 request.ts（它需要 import 本模块）
+ * 形成循环依赖。因此 UA 由调用方以参数传入。
  */
 
 import type { Env } from '../types';
 import { md5Hex } from './md5';
+import { rewriteUpstreamUrl } from './upstream';
 
 export interface Fingerprint {
   buvid3: string;
@@ -121,6 +122,7 @@ async function hmacSha256Hex(key: string, message: string): Promise<string> {
  * POST GenWebTicket?key_id=ec02&hexsign=..&context[ts]=..&csrf=
  */
 async function fetchBiliTicket(
+  env: Env,
   userAgent: string,
   buvid3: string,
   timeoutMs: number,
@@ -134,7 +136,7 @@ async function fetchBiliTicket(
       'context[ts]': String(ts),
       csrf: '',
     });
-    const res = await fetch(`${TICKET_URL}?${query.toString()}`, {
+    const res = await fetch(rewriteUpstreamUrl(env, `${TICKET_URL}?${query.toString()}`), {
       method: 'POST',
       headers: {
         'User-Agent': userAgent,
@@ -160,9 +162,14 @@ async function fetchBiliTicket(
   return null;
 }
 
-async function fetchJson<T>(url: string, userAgent: string, timeoutMs: number): Promise<T | null> {
+async function fetchJson<T>(
+  env: Env,
+  url: string,
+  userAgent: string,
+  timeoutMs: number,
+): Promise<T | null> {
   try {
-    const res = await fetch(url, {
+    const res = await fetch(rewriteUpstreamUrl(env, url), {
       headers: {
         'User-Agent': userAgent,
         Referer: 'https://www.bilibili.com/',
@@ -184,6 +191,7 @@ async function fetchFingerprint(env: Env, userAgent: string): Promise<Fingerprin
 
   // 1) 官方 SPI 接口（同时给 buvid3 与 buvid4，最省事）
   const spi = await fetchJson<{ code?: number; data?: { b_3?: string; b_4?: string } }>(
+    env,
     SPI_URL,
     userAgent,
     timeoutMs,
@@ -196,7 +204,7 @@ async function fetchFingerprint(env: Env, userAgent: string): Promise<Fingerprin
   // 2) 抓首页 Set-Cookie
   if (!buvid3) {
     try {
-      const res = await fetch(HOME_URL, {
+      const res = await fetch(rewriteUpstreamUrl(env, HOME_URL), {
         headers: { 'User-Agent': userAgent },
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -217,7 +225,7 @@ async function fetchFingerprint(env: Env, userAgent: string): Promise<Fingerprin
     buvid4 = randomHex(32);
   }
 
-  const ticketInfo = await fetchBiliTicket(userAgent, buvid3, timeoutMs);
+  const ticketInfo = await fetchBiliTicket(env, userAgent, buvid3, timeoutMs);
   return buildFingerprint(
     buvid3,
     buvid4,

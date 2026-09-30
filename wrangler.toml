@@ -2,6 +2,9 @@ name = "getbili"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
+# ⚠️ 当前主部署方式为 Vercel（见 vercel.json 与 api/index.ts），本文件仅用于
+# pnpm deploy:cf 备用部署。两平台共享同一套代码与 Env（差异见 src/lib/policy.ts 抽象）。
+
 # 是否允许跨域访问（默认 "true"）。部署后如需收紧，改成具体域名，如 "https://example.com"
 [vars]
 CORS_ORIGIN = "*"
@@ -11,9 +14,15 @@ REQUEST_TIMEOUT_MS = "15000"
 # 未登录时使用 try_look=1 预览高清晰度（B 站行为），默认开启
 TRY_LOOK = "true"
 
-# 登录态 Cookie 请勿写在这里（会进版本库）。
-# 本地开发： 写入 .dev.vars 文件 -> BILI_COOKIE="SESSDATA=xxx; bili_jct=xxx"
-# 线上部署： pnpm exec wrangler secret put BILI_COOKIE
+# 上游出口代理（可选）。B 站对 Cloudflare Workers 出口 IP 做 IP 级风控（-412 request was banned），
+# 线上直连拿不到任何数据时，把它配置为一台住宅/国内 IP 反向代理的基址（如 "https://bili.example.com"），
+# 所有上游请求将改发到该地址（代理需把 Host/SNI 指回 api.bilibili.com，配置示例见 README）。
+# 本地 dev（家宽 IP）无需配置，留空即直连。
+# UPSTREAM_PROXY_BASE = ""
+
+# 登录态 Cookie / 管理后台令牌请勿写在这里（会进版本库）。
+# 本地开发： 写入 .dev.vars 文件 -> BILI_COOKIE="SESSDATA=xxx; bili_jct=xxx" / ADMIN_TOKEN=xxx
+# 线上部署： pnpm exec wrangler secret put BILI_COOKIE / pnpm exec wrangler secret put ADMIN_TOKEN
 
 # 接口公开策略存储。部署前需创建并回填 id：
 #   pnpm exec wrangler kv namespace create POLICY_KV

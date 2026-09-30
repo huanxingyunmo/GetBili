@@ -8,11 +8,11 @@
 import type { BiliEnvelope, Env } from '../types';
 import { BiliError, biliCodeToStatus, upstreamError } from './errors';
 import { fingerprintToCookieString, getFingerprint } from './fingerprint';
+import { API_BASE, rewriteUpstreamUrl } from './upstream';
 
 export const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
-export const API_BASE = 'https://api.bilibili.com';
 export const MAIN_REFERER = 'https://www.bilibili.com';
 
 export function getCookieString(env: Env, override?: string): string | undefined {
@@ -117,7 +117,7 @@ export async function biliRaw(env: Env, url: string, opts: FetchOptions = {}): P
       } else {
         delete headers.Cookie;
       }
-      const res = await fetch(url, {
+      const res = await fetch(rewriteUpstreamUrl(env, url), {
         headers,
         signal: AbortSignal.timeout(timeoutMs),
       });
