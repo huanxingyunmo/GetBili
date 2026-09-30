@@ -27,6 +27,25 @@ export function qualityName(qn: number): string {
   return QUALITY_MAP[qn] ?? `未知清晰度(${qn})`;
 }
 
+/**
+ * DASH 音频流的音质映射。
+ *
+ * 音频流的 `id` 与视频清晰度 `qn` **不是同一套编码**：视频是 6~127 的小整数，
+ * 音频是 30216 起的五位数。两者混用同一个映射表会让音频流一律落到
+ * `未知清晰度(30232)` 这种既难看又无信息量的兜底值上，因此单独维护一张表。
+ */
+export const AUDIO_QUALITY_MAP: Record<number, string> = {
+  30216: '64K 低音质',
+  30232: '132K 中音质',
+  30280: '192K 高音质',
+  30250: '杜比全景声',
+  30251: 'Hi-Res 无损',
+};
+
+export function audioQualityName(id: number): string {
+  return AUDIO_QUALITY_MAP[id] ?? `未知音质(${id})`;
+}
+
 export interface ParsedVideoId {
   bvid: string | null;
   aid: number | null;

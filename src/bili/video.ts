@@ -25,7 +25,7 @@ import type {
   VideoStat,
 } from '../types';
 import { BiliError, badRequest, notFound, upstreamError } from '../lib/errors';
-import { normalizeUrl, qualityName, toInt, videoUrl } from '../lib/parse';
+import { audioQualityName, normalizeUrl, qualityName, toInt, videoUrl } from '../lib/parse';
 import { biliData, buildUrl, isAnonymous, tryLookEnabled, type QueryValue } from '../lib/request';
 import { wbiGet } from '../lib/wbi';
 
@@ -291,11 +291,17 @@ function mapView(view: RawView, id: VideoIdParam): VideoDetail {
   };
 }
 
-function mapDashStream(raw: RawStream | null | undefined): DashStream {
+/**
+ * 映射一条 DASH 流。
+ *
+ * `kind` 用来选择清晰度名称的映射表：视频（qn 6~127）和音频（id 30216+）
+ * 是两套不相干的编码，用错表会让音频流一律显示为「未知清晰度」。
+ */
+function mapDashStream(raw: RawStream | null | undefined, kind: 'video' | 'audio'): DashStream {
   const id = toInt(raw?.id);
   return {
     id,
-    qualityName: qualityName(id),
+    qualityName: kind === 'audio' ? audioQualityName(id) : qualityName(id),
     baseUrl: asText(raw?.baseUrl ?? raw?.base_url),
     backupUrl: asTextArray(raw?.backupUrl ?? raw?.backup_url),
     bandwidth: toInt(raw?.bandwidth),
@@ -410,8 +416,8 @@ function mapPlayUrl(
   raw: RawPlayUrl,
   ctx: { bvid: string; cid: number; qn: number },
 ): PlayUrlResult {
-  const dashVideo = (raw.dash?.video ?? []).map(mapDashStream);
-  const dashAudio = (raw.dash?.audio ?? []).map(mapDashStream);
+  const dashVideo = (raw.dash?.video ?? []).map((s) => mapDashStream(s, 'video'));
+  const dashAudio = (raw.dash?.audio ?? []).map((s) => mapDashStream(s, 'audio'));
   const dash = raw.dash
     ? { duration: toInt(raw.dash.duration), video: dashVideo, audio: dashAudio }
     : null;
