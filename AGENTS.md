@@ -14,8 +14,14 @@
 
 ## 项目结构
 
-- `src/index.ts` —— Worker 入口：CORS、统一错误处理、路由挂载、服务自描述（`ENDPOINTS` 是接口清单的唯一权威来源）
+- `src/index.ts` —— Worker 入口：CORS、访问控制挂载（policyGuard / uiGate）、伪装门槛、路由挂载、服务自描述
 - `src/types.ts` —— **共享类型契约**，所有业务模块的接口签名以此为准；改动属破坏性变更
+- `src/lib/endpoints.ts` —— **接口契约清单（ENDPOINTS）的唯一权威来源**（策略键与自描述共用；index.ts 也从这里 import）
+- `src/lib/auth.ts` —— 管理后台认证：ADMIN_TOKEN 校验、HMAC 会话 Cookie（`gb_adm`）、Bearer 通道、`requireAdmin`
+- `src/lib/policy.ts` —— 接口公开策略：KV 读写、路径模板匹配（`matchEndpointTemplate`）、`policyGuard` 中间件
+- `src/disguise/page.ts` —— Cloudflare 404 伪装页（`cf404Page`，未登录时隐藏服务存在）
+- `src/adm/page.ts` + `src/routes/adm.ts` —— /adm 管理后台（登录 + 策略开关，单文件内联 HTML）
+- `src/ui/page.ts` + `src/routes/ui.ts` —— /ui 浏览器控制台（单文件内联 HTML）
 - `src/lib/md5.ts` —— 纯 TS MD5（WBI 签名必需，见下方「项目记忆」）
 - `src/lib/request.ts` —— 上游请求层：UA/Referer/Origin/Cookie 头、超时、重试、`biliRaw`/`biliEnvelope`/`biliData`
 - `src/lib/wbi.ts` —— WBI 签名 + `wbiGet`（含按错误码自动刷新密钥/指纹并重试）
@@ -30,7 +36,9 @@
 - `src/bili/collection.ts` —— 合集（ugc_season）/ 收藏夹
 - `src/routes/*.ts` —— 按资源划分的 Hono 路由
 - `scripts/md5-check.mjs` —— RFC 1321 官方向量回归
-- `scripts/smoke.mjs` —— 全接口冒烟（打本地 dev 服务，服务端再打真实上游）
+- `scripts/smoke.mjs` —— 全接口冒烟（打本地 dev 服务，服务端再打真实上游；含访问控制与伪装断言，需 `.dev.vars` 里有 `ADMIN_TOKEN`）
+- `scripts/ui-check.mjs` —— 内联页面离线检查（ui + adm + disguise 共 28 项，无需起服务）
+- `scripts/ui-e2e.mjs` —— CDP 真实浏览器端到端（15 项，需先起 pnpm dev + 无头 Chrome，浏览器内先登录 /adm）
 - `scripts/debug-upstream.ts` —— 调试夹具：直接打上游并打印原始响应，排查字段映射/风控必备
 - `docs/API.md` —— 完整接口文档
 - `wrangler.toml` —— Worker 配置与环境变量
@@ -145,6 +153,19 @@ B 站风控有**两类**「伪成功」响应，都会让调用方拿到看起�
 - 手写 varint 解析，无依赖。`DanmakuElem` 字段号：1=id, 2=progress(ms), 3=mode, 4=fontsize, 5=color, 6=midHash, 7=content, 8=ctime, 9=weight, 11=pool；`DmSegMobileReply` 的 field 1 是 repeated DanmakuElem
 - 注意 `@cloudflare/workers-types` 把 `TextDecoder` 的 `ignoreBOM` 标为必填，构造时要显式传 `{ fatal: false, ignoreBOM: false }`
 - XML 输出严格保持原始数据（不做合并/过滤，合并逻辑只服务于参考项目的 ASS 生成，本项目不需要）
+
+### 访问控制与伪装（2026-09-30 新增）
+
+**三层结构**：认证（`src/lib/auth.ts`）→ 策略（`src/lib/policy.ts`）→ 伪装（`src/disguise/page.ts`）。
+
+- **认证**：`ADMIN_TOKEN`（secret）是唯一凭据。登录成功签发 HttpOnly + SameSite=Strict 的 HMAC 签名 Cookie（`gb_adm`，值 `<expMs>.<hex32签名>`，24h）；同时支持 `Authorization: Bearer <ADMIN_TOKEN>` 直连（脚本调用友好）。HMAC 密钥由 ADMIN_TOKEN 派生，**更换 ADMIN_TOKEN 即踢出全部会话**。token 比较先 SHA-256 再逐字节比对（防时序攻击）；登录失败固定延迟 300ms。
+- **伪装矩阵**（未登录时）：`/`、`/api`（自描述端点）、`/ui`、`/ui/` → `cf404Page()` HTTP 404（三栏状态图 + Ray ID footer，main.css 与 SVG 图标全部内联，零外链）；业务接口被策略拦截 → 与 notFound 逐字一致的 JSON 404（不暴露「存在但需权限」）；全局 notFound 对 Accept 含 text/html 的请求也返回伪装页（与真实 CF 行为一致）。**伪装页是唯一的「明文 404」来源，不要把它改成 401/302**——那会立刻暴露服务存在。
+- **策略**：KV（`POLICY_KV`，键 `api_policy`），值为 `Record<'/api' | '/api/health' | ENDPOINTS模板, 'public'|'token'>`。`matchEndpointTemplate()` 把实际路径映射回模板（`:xxx` 匹配任意单段）。**KV 读失败 fail-closed（按 token 处理），KV 未绑定全放行**——前者防「管理员以为锁了」，后者保持未部署 KV 时的向后兼容。
+- **中间件顺序（关键）**：`policyGuard` 与 `uiGate` 必须挂在最外层 CORS 中间件**之后**（否则拦截响应丢 CORS 头）、所有路由注册之前；OPTIONS 预检在外层已短路。`/adm` 不受 policyGuard 管（否则会把自己锁死），`/adm/api/*` 用 `requireAdmin` 保护。
+- **workers-types 5.x 下用裸 `crypto` 而不是 `globalThis.crypto`**（后者过不了 TS2339，与 fingerprint.ts 惯例一致，运行时等价）。
+- **测试**：smoke 38 项（含 11 项访问控制断言 + 策略闭环 try/finally 恢复现场）、ui-check 28 项（ui 12 + adm 12 + disguise 4）、e2e 15 项（浏览器内 fetch 登录后 cookie 自动落 jar）。冒烟测试从 `.dev.vars` 解析 ADMIN_TOKEN，不读 BILI_COOKIE 进变量。
+
+**内联页面三约定（血泪教训，三个页面都适用）**：整页 HTML 是一个模板字面量导出；内层 JS 禁止嵌套模板字面量与一切反斜杠（正则、`\n`、转义引号全不行）；动态文本一律 `textContent`/`createTextNode` 禁止 `innerHTML`。离线检查由 `scripts/ui-check.mjs` 把关（含 `vm.Script` 语法解析），违反约定的代码过不了它。
 
 ### 其他约定
 

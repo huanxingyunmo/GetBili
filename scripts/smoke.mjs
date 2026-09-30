@@ -4,13 +4,51 @@
  * 会真实请求本地 wrangler dev 服务（默认 http://127.0.0.1:8787），
  * 由服务端再去请求真实的 B 站上游接口。
  *
+ * 访问控制：GET /、GET /api、GET /ui 等入口需要管理登录态（ADMIN_TOKEN，
+ * 从项目根 .dev.vars 解析），脚本开头先经 POST /adm/login 签发会话 cookie，
+ * 后续受保护请求统一带上；「访问控制与伪装」一节再对未登录/篡改/策略闭环
+ * 做反向断言。
+ *
  * 用法：
  *   pnpm dev                 # 另一个终端先起服务
  *   node scripts/smoke.mjs
  *   SMOKE_BASE=http://127.0.0.1:8788 node scripts/smoke.mjs
  */
 
+import { readFileSync } from 'node:fs';
+
 const BASE = process.env.SMOKE_BASE ?? 'http://127.0.0.1:8787';
+
+/** 页面内容一致性校验只在本地开发服务上做（部署环境可能与工作区不一致） */
+const IS_LOCAL = BASE.includes('127.0.0.1') || BASE.includes('localhost');
+
+/**
+ * 从项目根 .dev.vars 解析 ADMIN_TOKEN（KEY=VALUE 行，值可能带引号）。
+ * 只提取 ADMIN_TOKEN 一行；BILI_COOKIE 不读入内存变量、更不进日志。
+ */
+function loadAdminToken() {
+  const raw = readFileSync(new URL('../.dev.vars', import.meta.url), 'utf8');
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    if (trimmed.slice(0, eq).trim() !== 'ADMIN_TOKEN') continue;
+    const value = trimmed.slice(eq + 1).trim();
+    const unquoted = value.length >= 2 && /^["'].*["']$/.test(value) ? value.slice(1, -1) : value;
+    if (unquoted) return unquoted;
+  }
+  return null;
+}
+
+const ADMIN_TOKEN = IS_LOCAL ? loadAdminToken() : null;
+
+/** 管理会话请求头（登录后由 ctx.adminCookie 填充） */
+function adminHeaders(extra = {}) {
+  const headers = { ...extra };
+  if (ctx.adminCookie) headers.Cookie = ctx.adminCookie;
+  return headers;
+}
 
 /** 备选测试视频：取第一个能正常返回详情的 */
 const VIDEO_CANDIDATES = ['BV1GJ411x7h7', 'BV17x411w7KC', 'BV1xx411c7mD', 'BV1uv411q7Mv'];
@@ -54,10 +92,12 @@ function assert(cond, message) {
   if (!cond) throw new Error(message);
 }
 
-/** 发请求并返回 { status, body, text } */
-async function req(path, expectStatus = 200) {
+/** 发请求并返回 { status, body, text }；extraHeaders 里的 Accept 可覆盖默认值 */
+async function req(path, expectStatus = 200, extraHeaders = {}) {
   const url = path.startsWith('http') ? path : `${BASE}${path}`;
-  const res = await fetch(url, { headers: { Accept: 'application/json, application/xml, */*' } });
+  const res = await fetch(url, {
+    headers: { Accept: 'application/json, application/xml, */*', ...extraHeaders },
+  });
   const text = await res.text();
   let body = null;
   try {
@@ -76,10 +116,33 @@ async function req(path, expectStatus = 200) {
 }
 
 /** 请求并断言业务 code === 0 */
-async function reqOk(path) {
-  const { body, text } = await req(path, 200);
+async function reqOk(path, extraHeaders = {}) {
+  const { body, text } = await req(path, 200, extraHeaders);
   assert(body && body.code === 0, `${path} 业务码非 0：${text.slice(0, 200)}`);
   return body;
+}
+
+/**
+ * 用 ADMIN_TOKEN 登录并记录会话 cookie。
+ * 登录失败直接退出——登录态是后续大半断言的前提，静默降级只会产生误导性的连锁 FAIL。
+ */
+async function loginAdmin() {
+  if (!ADMIN_TOKEN) {
+    console.error('无法从 .dev.vars 解析 ADMIN_TOKEN，受保护断言无法执行。');
+    process.exit(1);
+  }
+  const res = await fetch(`${BASE}/adm/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: ADMIN_TOKEN }),
+  });
+  const text = await res.text();
+  assert(res.status === 200, `POST /adm/login 期望 200，实际 ${res.status}：${text.slice(0, 160)}`);
+  const setCookie = res.headers.get('set-cookie') ?? '';
+  const m = setCookie.match(/gb_adm=([^;]+)/);
+  assert(m !== null, `登录响应缺少 gb_adm cookie：${setCookie.slice(0, 120)}`);
+  ctx.adminCookie = `gb_adm=${m[1]}`;
+  return ctx.adminCookie;
 }
 
 console.log(`\n=== GetBili 冒烟测试  base=${BASE} ===\n`);
@@ -92,9 +155,17 @@ try {
   process.exit(1);
 }
 
+// ---------- 0.5 管理登录（GET /、/api、/ui 与策略接口都依赖会话） ----------
+if (!IS_LOCAL) {
+  console.error('非本地服务暂不支持登录流程，本脚本目前只针对 wrangler dev 设计。');
+  process.exit(1);
+}
+await loginAdmin();
+console.log(`[PASS] 管理登录（会话 cookie 已签发，token 来源：.dev.vars）\n`);
+
 // ---------- 1. 服务自描述 ----------
 await check('GET / 服务自描述', async () => {
-  const body = await reqOk('/');
+  const body = await reqOk('/', adminHeaders());
   assert(body.data?.service?.name === 'GetBili API', '服务名不符');
   assert(Array.isArray(body.data.endpoints) && body.data.endpoints.length >= 10, '接口清单缺失');
   return `接口数 ${body.data.endpoints.length}，anonymous=${body.data.auth?.usingCookie === false}`;
@@ -202,7 +273,19 @@ await skipIf(
       assert(a && a.baseUrl.startsWith('http'), 'best.audio.baseUrl 异常');
       // 校验 best 选择策略：应为 <= 请求清晰度中的最高者
       assert(v.id <= d.requestQn, `best.video.id=${v.id} 高于请求清晰度 ${d.requestQn}`);
-      return `format=dash 流数=video(${d.dash.video.length})/audio(${d.dash.audio.length}) best=video[qn=${v.id} ${v.qualityName} ${v.codecs}] audio[${a.bandwidth}bps] 实际qn=${d.qn}`;
+
+      // 清晰度名称必须被完整映射：视频走 qn 表、音频走音质表。
+      // 映射缺口不会报错，只会静默退化成「未知清晰度(30232)」这类无信息量的值，
+      // 因此这里显式挡住 —— 曾经音频流的 id 就是没被覆盖到。
+      const unmapped = [...d.dash.video, ...d.dash.audio].filter(
+        (s) => s.qualityName.startsWith('未知'),
+      );
+      assert(
+        unmapped.length === 0,
+        `有 ${unmapped.length} 条流的清晰度名称未映射：${unmapped.map((s) => s.id + '→' + s.qualityName).join(', ')}`,
+      );
+
+      return `format=dash 流数=video(${d.dash.video.length})/audio(${d.dash.audio.length}) best=video[qn=${v.id} ${v.qualityName} ${v.codecs}] audio[${a.qualityName} ${a.bandwidth}bps] 实际qn=${d.qn}`;
     }
     return `format=durl 段数=${d.durl.length} 地址=${d.durl[0].url.slice(0, 48)}...`;
   },
@@ -546,6 +629,231 @@ await skipIf(
   },
   '无可用测试视频',
 );
+
+// ---------- 18. 控制台页面 ----------
+
+/** 这些 id 是页面脚本与端到端测试的锚点，改名会让断言静默失效 */
+const UI_REQUIRED_IDS = [
+  'healthPill', 'themeBtn', 'tabs',
+  'videoForm', 'videoInput', 'videoOut',
+  'userForm', 'userInput', 'userOut',
+  'searchForm', 'searchType', 'searchInput', 'searchOut',
+  'favForm', 'favInput', 'favOut',
+  'apiOut', 'toast',
+];
+
+await check('GET /ui 控制台页面', async () => {
+  const { status, text } = await req('/ui', 200, adminHeaders());
+  assert(status === 200, `状态非 200：${status}`);
+  assert(text.startsWith('<!DOCTYPE html>'), '不是完整 HTML 文档');
+  assert(text.trimEnd().endsWith('</html>'), '缺少 </html>，文档可能被截断');
+  const missing = UI_REQUIRED_IDS.filter((id) => !text.includes('id="' + id + '"'));
+  assert(missing.length === 0, `缺少关键元素：${missing.join(', ')}`);
+  assert(text.length > 20000, `页面异常偏小：${text.length} 字符`);
+  return `${text.length} 字符，${UI_REQUIRED_IDS.length} 个关键元素齐全`;
+});
+
+await check('GET /ui 响应头（HTML + CSP）', async () => {
+  const res = await fetch(`${BASE}/ui`, { headers: adminHeaders() });
+  const type = res.headers.get('content-type') ?? '';
+  const csp = res.headers.get('content-security-policy') ?? '';
+  assert(type.includes('text/html'), `Content-Type 不是 HTML：${type}`);
+  assert(type.includes('charset=utf-8'), `Content-Type 缺少 charset：${type}`);
+  assert(csp.includes("default-src 'self'"), `未下发 CSP：${csp}`);
+  assert(csp.includes('player.bilibili.com'), 'CSP 未放行官方播放器 iframe');
+  assert(csp.includes("connect-src 'self'"), 'CSP 未限制请求目标为同源');
+  return `content-type=${type}；CSP 已下发`;
+});
+
+await check('GET /ui/ 尾斜杠等价', async () => {
+  const { status, text } = await req('/ui/', 200, adminHeaders());
+  assert(status === 200 && text.startsWith('<!DOCTYPE html>'), '尾斜杠路径不可用');
+  return '与 /ui 返回同一页面';
+});
+
+await check('GET / 自描述暴露控制台入口', async () => {
+  const body = await reqOk('/', adminHeaders());
+  assert(body.data?.console?.path === '/ui', '未暴露控制台路径');
+  assert(Array.isArray(body.data.endpoints), '接口清单缺失');
+  return `console.path=${body.data.console.path}，接口仍为 ${body.data.endpoints.length} 个`;
+});
+
+await skipIf(
+  !IS_LOCAL,
+  '页面内容与源码模板字面量逐字节一致',
+  async () => {
+    // 防止「改了 page.ts 但服务端仍在跑旧产物」这类静默失真
+    const src = readFileSync(new URL('../src/ui/page.ts', import.meta.url), 'utf8');
+    const marker = 'export const UI_HTML = ';
+    const start = src.indexOf('`', src.indexOf(marker));
+    const end = src.lastIndexOf('`');
+    assert(start >= 0 && end > start, '无法从源码中提取 UI_HTML');
+    const expected = src.slice(start + 1, end);
+    const { text } = await req('/ui', 200, adminHeaders());
+    assert(
+      text === expected,
+      `服务端页面与源码不一致：服务端 ${text.length} 字符 / 源码 ${expected.length} 字符`,
+    );
+    return `逐字节一致（${text.length} 字符）`;
+  },
+  '非本地服务，跳过源码比对',
+);
+
+// ---------- 19. 访问控制与伪装 ----------
+
+/** 断言响应体是 Cloudflare 404 伪装页（cf-error-details 结构 + 错误码文案） */
+function assertCfDisguise(text, label) {
+  assert(text.includes('cf-error-details'), `${label} 未返回伪装页（缺少 cf-error-details）`);
+  assert(text.includes('Error code 404'), `${label} 伪装页缺少 Error code 404 文案`);
+}
+
+/**
+ * 未登录请求（Node fetch 默认不带任何 cookie，天然是「游客」身份）。
+ * 这些断言放在最后：前面的业务断言全部依赖登录态，且策略闭环会临时改写
+ * KV 里的接口公开策略——放最后能保证「改了又恢复」不会波及任何业务断言。
+ */
+await check('未登录 GET / → Cloudflare 404 伪装', async () => {
+  const res = await fetch(`${BASE}/`);
+  assert(res.status === 404, `期望 404，实际 ${res.status}`);
+  const text = await res.text();
+  assertCfDisguise(text, 'GET /');
+  const ray = res.headers.get('CF-Ray');
+  assert(ray !== null && ray.length > 0, '伪装响应缺少 CF-Ray 头');
+  return `HTTP 404，CF-Ray=${ray}`;
+});
+
+await check('未登录 GET /api → Cloudflare 404 伪装', async () => {
+  const res = await fetch(`${BASE}/api`);
+  assert(res.status === 404, `期望 404，实际 ${res.status}`);
+  assertCfDisguise(await res.text(), 'GET /api');
+  return 'HTTP 404，伪装页结构完整';
+});
+
+await check('未登录 GET /ui 与 /ui/ → Cloudflare 404 伪装', async () => {
+  for (const path of ['/ui', '/ui/']) {
+    const res = await fetch(`${BASE}${path}`);
+    assert(res.status === 404, `${path} 期望 404，实际 ${res.status}`);
+    assertCfDisguise(await res.text(), `GET ${path}`);
+  }
+  return '控制台入口对游客不可见（不暴露控制台存在）';
+});
+
+await check('未登录 GET /adm → 管理页 HTML 公开（200）', async () => {
+  const res = await fetch(`${BASE}/adm`);
+  assert(res.status === 200, `期望 200，实际 ${res.status}`);
+  const text = await res.text();
+  // 管理页本体公开，登录态/未登录/未启用三态由页面 JS 依 session 接口切换
+  const ids = [
+    'authArea', 'panelArea', 'disabledArea',
+    'tokenInput', 'loginBtn', 'authErr', 'policyList',
+    'saveBtn', 'resetBtn', 'logoutBtn', 'toast',
+  ];
+  const missing = ids.filter((id) => !text.includes(`id="${id}"`));
+  assert(missing.length === 0, `管理页缺少关键元素：${missing.join(', ')}`);
+  assert(text.includes('data-admin-enabled="true"'), '管理页未注入 data-admin-enabled=true');
+  return `${text.length} 字符，${ids.length} 个关键元素齐全`;
+});
+
+await check('POST /adm/login 正确令牌 → 200 + Set-Cookie(gb_adm)', async () => {
+  const cookie = await loginAdmin();
+  assert(cookie.startsWith('gb_adm='), '会话 cookie 名不符');
+  assert(cookie.length > 'gb_adm='.length + 10, '会话 cookie 值异常偏短');
+  return '会话已重新签发并更新到后续请求';
+});
+
+await check('POST /adm/login 错误令牌 → 401「令牌不正确」', async () => {
+  const res = await fetch(`${BASE}/adm/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: 'definitely-not-the-token' }),
+  });
+  assert(res.status === 401, `期望 401，实际 ${res.status}`);
+  const body = await res.json();
+  assert(body.code === -401, `期望 code=-401，实际 ${body.code}`);
+  assert(body.message === '令牌不正确', `文案不符：${body.message}`);
+  return 'HTTP 401，错误文案正确';
+});
+
+await check('Authorization: Bearer → GET / 返回自描述 JSON', async () => {
+  const body = await reqOk('/', { Authorization: `Bearer ${ADMIN_TOKEN}` });
+  assert(body.data?.service?.name === 'GetBili API', 'Bearer 通道未放行自描述');
+  assert(Array.isArray(body.data.endpoints), '接口清单缺失');
+  return `Bearer 通道可用，接口数 ${body.data.endpoints.length}`;
+});
+
+await check('篡改会话 cookie（gb_adm=1.2）→ GET /ui 404 伪装', async () => {
+  const res = await fetch(`${BASE}/ui`, { headers: { Cookie: 'gb_adm=1.2' } });
+  assert(res.status === 404, `期望 404，实际 ${res.status}`);
+  assertCfDisguise(await res.text(), '篡改 cookie 的 GET /ui');
+  return '伪造签名无法通过校验，仍按伪装 404 处理';
+});
+
+// 策略闭环：临时把 /api/video/:id 设为 token，验证拦截形态后必须恢复。
+// 本地 KV（.wrangler/state）跨进程持久化，不恢复会污染后续所有运行。
+await check('策略闭环：/api/video/:id 设为 token 后按身份分流', async () => {
+  const putHeaders = adminHeaders({ 'Content-Type': 'application/json' });
+  const put = await fetch(`${BASE}/adm/api/policy`, {
+    method: 'PUT',
+    headers: putHeaders,
+    body: JSON.stringify({ policy: { '/api/video/:id': 'token' } }),
+  });
+  assert(put.status === 200, `PUT 策略期望 200，实际 ${put.status}：${(await put.text()).slice(0, 160)}`);
+
+  try {
+    // 模板不同的兄弟接口不受波及（/pages 是独立模板，默认 public）
+    const pages = await fetch(`${BASE}/api/video/BV1GJ411x7h7/pages`);
+    assert(pages.status === 200, `未登录 GET /pages 受波及：${pages.status}`);
+
+    // 未登录访问被锁接口 → B 站风格 JSON 404，与「接口不存在」不可区分
+    const anon = await fetch(`${BASE}/api/video/BV1GJ411x7h7`);
+    assert(anon.status === 404, `未登录详情期望 404，实际 ${anon.status}`);
+    const anonBody = await anon.json();
+    assert(anonBody.code === -404, `拦截响应期望 code=-404，实际 ${anonBody.code}`);
+
+    // 带管理会话 → 正常 200
+    const authed = await fetch(`${BASE}/api/video/BV1GJ411x7h7`, { headers: adminHeaders() });
+    assert(authed.status === 200, `带会话详情期望 200，实际 ${authed.status}`);
+    const authedBody = await authed.json();
+    assert(authedBody.code === 0, `带会话详情业务码异常：${authedBody.code}`);
+    return '未登录 404(code=-404) / 带会话 200 / 兄弟模板不受波及';
+  } finally {
+    // 无论断言成败都必须恢复现场
+    const restore = await fetch(`${BASE}/adm/api/policy`, {
+      method: 'PUT',
+      headers: adminHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ policy: { '/api/video/:id': 'public' } }),
+    });
+    if (restore.status !== 200) {
+      console.error('!!! 策略恢复失败，请手动检查 /adm/api/policy，否则后续运行会被污染');
+    }
+  }
+});
+
+await check('策略现场已恢复：/api/video/:id 回到 public', async () => {
+  const body = await reqOk('/adm/api/policy', adminHeaders());
+  const value = body.data?.policy?.['/api/video/:id'];
+  assert(value === undefined || value === 'public', `策略未恢复：${String(value)}`);
+  // 未登录详情不再被拦截（用 HTTP 状态码说话）
+  const res = await fetch(`${BASE}/api/video/BV1GJ411x7h7`);
+  assert(res.status !== 404, `恢复后未登录详情仍是 404（KV 现场未清干净）`);
+  return `policy[/api/video/:id]=${value ?? '(默认 public)'}，未登录访问 HTTP ${res.status}`;
+});
+
+await check('PUT /adm/api/policy 非法值 → 400', async () => {
+  const res = await fetch(`${BASE}/adm/api/policy`, {
+    method: 'PUT',
+    headers: adminHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ policy: { '/api/video/:id': 'everyone' } }),
+  });
+  assert(res.status === 400, `期望 400，实际 ${res.status}`);
+  const body = await res.json();
+  assert(body.code === -400, `期望 code=-400，实际 ${body.code}`);
+  // 非法请求不得写入任何状态
+  const after = await reqOk('/adm/api/policy', adminHeaders());
+  const value = after.data?.policy?.['/api/video/:id'];
+  assert(value === undefined || value === 'public', `非法 PUT 污染了策略：${String(value)}`);
+  return `HTTP 400，code=${body.code}，策略状态未被污染`;
+});
 
 // ---------- 汇总 ----------
 const pass = results.filter((r) => r.ok === true).length;

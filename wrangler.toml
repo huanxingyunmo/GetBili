@@ -15,5 +15,12 @@ TRY_LOOK = "true"
 # 本地开发： 写入 .dev.vars 文件 -> BILI_COOKIE="SESSDATA=xxx; bili_jct=xxx"
 # 线上部署： pnpm exec wrangler secret put BILI_COOKIE
 
+# 接口公开策略存储。部署前需创建并回填 id：
+#   pnpm exec wrangler kv namespace create POLICY_KV
+# 本地 dev（wrangler dev）使用内置本地 KV 模拟，无需真实 id，占位符可直接跑。
+[[kv_namespaces]]
+binding = "POLICY_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
 [observability]
 enabled = true

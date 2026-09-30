@@ -20,6 +20,7 @@
 - **设备指纹**：SPI 取 buvid3/buvid4 + HMAC-SHA256 申请 `bili_ticket` + web 端指纹 Cookie 集合
 - **输入兼容**：BV 号 / av 号 / 完整视频链接 / URL 编码链接，UP 主 mid / 空间链接，收藏夹 ID / 带 `fid=` 的链接
 - **CORS**：自实现中间件，保证**连错误响应**也带 CORS 头；支持 `*` 或逗号分隔白名单
+- **访问控制与伪装**：未登录时首页与控制台伪装成 Cloudflare 404 错误页隐藏服务存在；`/adm` 管理后台（令牌登录）可在线切换每个接口的「公开 / 需令牌」策略（KV 持久化）
 
 ---
 
@@ -44,7 +45,7 @@
 ```text
 GetBili/
 ├── src/
-│   ├── index.ts              # Worker 入口：CORS、统一错误处理、路由挂载、服务自描述
+│   ├── index.ts              # Worker 入口：CORS、访问控制挂载、伪装门槛、路由挂载、服务自描述
 │   ├── types.ts              # 全局类型契约（Env 与所有接口返回结构）
 │   ├── bili/                 # 业务模块（直接对接 B 站上游并做字段映射）
 │   │   ├── video.ts          # 视频详情 / 分P / 播放地址 / 可用清晰度
@@ -59,19 +60,30 @@ GetBili/
 │   │   ├── parse.ts          # 输入解析（BV/av/URL、mid、收藏夹 ID）与格式化
 │   │   ├── md5.ts            # 纯 TypeScript MD5
 │   │   ├── http.ts           # 统一响应信封 / 查询参数读取 / CORS
-│   │   └── errors.ts         # 错误类型与 B 站错误码 -> HTTP 状态码映射
-│   └── routes/               # Hono 路由装配
-│       ├── video.ts
-│       ├── user.ts
-│       ├── search.ts
-│       └── favlist.ts
+│   │   ├── errors.ts         # 错误类型与 B 站错误码 -> HTTP 状态码映射
+│   │   ├── auth.ts           # 管理后台认证（ADMIN_TOKEN 校验 + HMAC 会话 Cookie + Bearer）
+│   │   ├── policy.ts         # 接口公开策略（KV 存储 + 路径模板匹配 + 拦截中间件）
+│   │   └── endpoints.ts      # 接口契约清单（ENDPOINTS，策略键与自描述共用）
+│   ├── routes/               # Hono 路由装配
+│   │   ├── video.ts
+│   │   ├── user.ts
+│   │   ├── search.ts
+│   │   ├── favlist.ts
+│   │   ├── ui.ts             # /ui 控制台页面路由
+│   │   └── adm.ts            # /adm 管理后台路由（登录 / 会话 / 策略读写）
+│   ├── ui/page.ts            # /ui 浏览器控制台（单文件内联 HTML）
+│   ├── adm/page.ts           # /adm 管理页（登录 + 策略开关，单文件内联 HTML）
+│   └── disguise/page.ts      # Cloudflare 404 伪装页（未登录时隐藏服务存在）
 ├── scripts/
-│   ├── smoke.mjs             # 全接口冒烟测试（真实打到本地服务 + B 站上游）
+│   ├── smoke.mjs             # 全接口冒烟测试（含访问控制与伪装断言，真实打到本地服务 + B 站上游）
 │   ├── md5-check.mjs         # MD5 回归测试（RFC 1321 官方向量）
+│   ├── ui-check.mjs          # 内联页面离线检查（模板字面量/转义/语法/id 完整性）
+│   ├── ui-e2e.mjs            # CDP 真实浏览器端到端测试（需先起 pnpm dev + 无头 Chrome）
 │   └── debug-upstream.ts     # 直接请求上游并打印原始响应，用于排查字段映射
 ├── docs/
-│   └── API.md                # 完整接口文档
-├── wrangler.toml             # Workers 配置与非敏感环境变量
+│   ├── API.md                # 完整接口文档
+│   └── console-*.png         # 控制台页面截图
+├── wrangler.toml             # Workers 配置与非敏感环境变量（含 POLICY_KV 绑定）
 ├── tsconfig.json
 └── package.json
 ```
@@ -92,7 +104,7 @@ pnpm install
 pnpm dev            # 本地预览，默认 http://127.0.0.1:8787
 ```
 
-启动后访问 `http://127.0.0.1:8787/` 或 `/api` 可看到服务自描述与全部接口清单。
+启动后访问 `http://127.0.0.1:8787/` —— 未登录时**伪装成 Cloudflare 404 错误页**（这是预期行为，用于隐藏服务存在）。用 `ADMIN_TOKEN` 登录 `/adm` 后，`/`、`/api`、`/ui` 才会正常展示。
 
 ### 部署到 Cloudflare
 
@@ -100,8 +112,14 @@ pnpm dev            # 本地预览，默认 http://127.0.0.1:8787
 # 首次部署前先登录（会打开浏览器完成授权）
 pnpm exec wrangler login
 
+# 创建接口策略存储的 KV namespace，并把返回的 id 回填到 wrangler.toml 的 POLICY_KV
+pnpm exec wrangler kv namespace create POLICY_KV
+
 # 部署
 pnpm deploy
+
+# 配置管理后台令牌（未配置则 /adm 显示「后台未启用」）
+pnpm exec wrangler secret put ADMIN_TOKEN
 ```
 
 ### 配置登录态（可选，但强烈建议）
@@ -131,8 +149,50 @@ pnpm exec wrangler secret put BILI_COOKIE
 | `CORS_ORIGIN` | 普通变量 | `"*"` | 允许的跨域来源，支持逗号分隔白名单 |
 | `REQUEST_TIMEOUT_MS` | 普通变量 | `"15000"` | 上游请求超时（毫秒） |
 | `TRY_LOOK` | 普通变量 | `"true"` | 未登录时附加 `try_look=1` 以预览更高清晰度 |
+| `ADMIN_TOKEN` | **secret** | 无 | `/adm` 管理后台令牌；配置后启用登录、`/ui` 与首页门槛、接口策略管理。**不要写进 `wrangler.toml`** |
 | `BILI_COOKIE` | **secret** | 无 | 登录态 Cookie，**不要写进 `wrangler.toml`** |
 | `BILI_UA` | secret / 变量 | 内置 Chrome UA | 自定义 User-Agent |
+
+KV 绑定：`POLICY_KV`（接口公开策略存储，本地 dev 由 wrangler 自动模拟，无需真实 id；线上部署前需 `wrangler kv namespace create POLICY_KV` 并回填 id 到 `wrangler.toml`）。
+
+---
+
+## 访问控制与管理后台
+
+### 行为矩阵
+
+| 请求 | 未登录（无会话/Bearer） | 已登录 |
+| --- | --- | --- |
+| `GET /` | **Cloudflare 404 伪装页**（HTTP 404） | 服务自描述 JSON |
+| `GET /api` | 同上伪装 | 服务自描述 JSON |
+| `GET /ui`、`GET /ui/` | 同上伪装 | 浏览器控制台页面 |
+| `GET /adm` | 管理页（未登录态：令牌输入框） | 管理页（策略开关） |
+| 业务接口（`/api/video/*` 等） | 按策略表：默认**公开**；设为「需令牌」后返回与 notFound 相同的 JSON 404 | 会话 Cookie 或 Bearer 均可通过 |
+| 未知路径 | Accept 含 `text/html` → CF 404 伪装；API 请求 → JSON 404 | 同左 |
+
+> 伪装页视觉来自 [cloudflare-error-page](https://github.com/nickvdyck/cloudflare-error-page) 风格模板：三栏状态图、Ray ID + IP footer，整页零外链、图标全部内联 data URI。
+
+### 登录方式
+
+- **页面**：访问 `/adm`，输入令牌登录（签发 HttpOnly 会话 Cookie，有效期 24h）
+- **脚本/程序化**：请求头带 `Authorization: Bearer <ADMIN_TOKEN>`，无需先登录
+
+### 接口公开策略
+
+`/adm` 页面登录后可逐个切换 12 个接口的「公开 / 需令牌」状态，保存后写入 KV（键 `api_policy`），实时生效：
+
+- 策略键是**接口模板**（如 `/api/video/:id`），同模板的全部实例路径一起生效
+- 策略为「需令牌」的接口未登录访问返回**与路由不存在完全一致的 JSON 404**（`code: -404`），不暴露「接口存在但需要权限」的信息
+- KV 读取失败时按「需令牌」处理（fail-closed，安全优先）；KV 未绑定时全部公开
+- `/api/health` 也纳入策略表但默认公开；`/adm` 本身永远可访问（否则会把自己锁死）
+
+### 本地开发配置
+
+`.dev.vars` 追加一行（该文件已 gitignore）：
+
+```ini
+ADMIN_TOKEN=dev-admin-token
+```
 
 ---
 
@@ -142,9 +202,11 @@ pnpm exec wrangler secret put BILI_COOKIE
 
 | 方法 | 路径 | 说明 | 主要查询参数 |
 | --- | --- | --- | --- |
-| GET | `/` | 服务自描述 + 接口清单（含登录态信息） | — |
-| GET | `/api` | 服务自描述 + 接口清单 | — |
+| GET | `/` | 服务自描述 + 接口清单（含登录态信息），**需登录**（未登录伪装 404） | — |
+| GET | `/api` | 服务自描述 + 接口清单，**需登录**（未登录伪装 404） | — |
 | GET | `/api/health` | 健康检查 | — |
+| GET | `/ui` | 浏览器控制台页面，**需登录** | — |
+| GET | `/adm` | 管理后台（令牌登录 + 接口策略开关） | — |
 | GET | `/api/video/:id` | 视频详情 | `qualities=1`、`pages=0` |
 | GET | `/api/video` | 视频详情（查询串入参） | `url` / `bvid` / `aid` |
 | GET | `/api/video/:id/pages` | 分 P 列表 | — |
@@ -172,7 +234,7 @@ pnpm exec wrangler secret put BILI_COOKIE
 | `-500` | 500 | 服务内部错误 |
 | `-509` / `-799` | 429 | 上游限流 / 请求被限制 |
 
-路由不存在时返回 HTTP 404，body 为 `{ "code": -404, "message": "接口不存在：GET /xxx", "data": null, "hint": "GET / 可查看全部可用接口" }`。
+路由不存在时返回 HTTP 404，body 为 `{ "code": -404, "message": "接口不存在：GET /xxx", "data": null, "hint": "GET / 可查看全部可用接口" }`。浏览器请求（`Accept` 含 `text/html`）则得到 Cloudflare 404 伪装页——与真实 Cloudflare 行为一致，仅对 HTML 请求渲染错误页。
 
 **关于 `-412`**：所有风控拦截统一返回 **HTTP 429 + `code=-412`**，便于调用方用单一 `code` 判定并按「稍后重试」处理。搜索接口识别到 `v_voucher` 风控应答时抛出的也是同一个码（见 `src/bili/search.ts`，状态码取自 `src/lib/errors.ts` 的 `biliCodeToStatus`）。`message` 中会明确提示配置 `BILI_COOKIE`。
 
@@ -212,7 +274,9 @@ pnpm exec wrangler secret put BILI_COOKIE
 ## 安全提示
 
 - **`BILI_COOKIE` 是敏感凭据**，等同于你的 B 站登录态。切勿写入 `wrangler.toml`、源码或提交到版本库。本地用 `.dev.vars`（已 gitignore），线上用 `wrangler secret put`。
+- **`ADMIN_TOKEN` 是管理后台唯一凭据**，泄露等同服务被接管（可改接口公开策略）。请使用足够长的随机串；本地 `.dev.vars` 已 gitignore，线上用 `wrangler secret put ADMIN_TOKEN`。
 - 生产环境建议把 `CORS_ORIGIN` 从 `"*"` 收紧为具体域名，避免任意站点直接调用你的服务。
+- 会话 Cookie 为 HttpOnly + SameSite=Strict，签名密钥由 `ADMIN_TOKEN` 派生——**更换 `ADMIN_TOKEN` 会立即使全部已有会话失效**（可用于紧急踢出）。
 - 服务为只读接口，不写入任何账号数据；但携带登录态 Cookie 意味着请求以你的账号身份发出，请自行评估风险。
 - 请勿高频调用，以免给上游造成压力，也避免触发风控导致服务不可用。
 

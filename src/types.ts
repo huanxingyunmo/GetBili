@@ -15,6 +15,14 @@ export interface Env {
   REQUEST_TIMEOUT_MS?: string;
   /** 未登录时是否附加 try_look=1 以预览高清晰度，默认 "true" */
   TRY_LOOK?: string;
+  /**
+   * /adm 管理后台令牌。配置后启用：/adm 登录、/ui 与首页自描述的登录门槛、
+   * 接口公开策略管理。未配置时 /adm 显示「后台未启用」，但伪装与策略仍生效。
+   * 本地写入 .dev.vars；线上用 `wrangler secret put ADMIN_TOKEN`。
+   */
+  ADMIN_TOKEN?: string;
+  /** 接口公开策略存储（KV namespace 绑定）。未绑定时所有接口按默认公开处理 */
+  POLICY_KV?: KVNamespace;
 }
 
 /** B 站通用响应信封 */
