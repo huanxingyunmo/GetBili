@@ -20,7 +20,7 @@ TRY_LOOK = "true"
 # 本地 dev（wrangler dev）使用内置本地 KV 模拟，无需真实 id，占位符可直接跑。
 [[kv_namespaces]]
 binding = "POLICY_KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "34e68f4804a941e28b3cb0f1d7ea618e"
 
 [observability]
 enabled = true
