@@ -12,9 +12,6 @@ importers:
         specifier: ^4.13.9
         version: 4.13.9
     devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^5.20260925.1
-        version: 5.20260925.1
       '@hono/node-server':
         specifier: ^1.14.4
         version: 1.19.17(hono@4.13.9)
@@ -691,7 +688,8 @@ snapshots:
   '@cloudflare/workerd-windows-64@1.20260923.1':
     optional: true
 
-  '@cloudflare/workers-types@5.20260925.1': {}
+  '@cloudflare/workers-types@5.20260925.1':
+    optional: true
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
