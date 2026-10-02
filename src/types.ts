@@ -4,6 +4,21 @@
  */
 
 /**
+ * Cloudflare KV 的最小接口面 —— 仅声明本项目实际用到的方法。
+ *
+ * 为什么不引用 @cloudflare/workers-types（或全局 declare KVNamespace）：
+ * Vercel 用 TS7 从入口文件沿 import 依赖图构建类型检查程序，
+ * 无人 import 的全局 .d.ts 声明不会被包含（TS2304），
+ * 而平台专有类型包在 Vercel 安装集里也保证不了存在（TS2688）。
+ * 放在共享契约文件里随 import 链传递，两平台共用且零外部依赖；
+ * Workers 运行时的真实 KVNamespace 实例结构兼容本接口，直接可用。
+ */
+export interface MinimalKV {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string): Promise<void>;
+}
+
+/**
  * 环境变量绑定。
  *
  * 兼容两种运行时：
@@ -29,7 +44,7 @@ export interface Env {
    */
   ADMIN_TOKEN?: string;
   /** 接口公开策略存储（Cloudflare KV namespace 绑定，仅 Workers 部署使用）。未绑定时回退其他后端 */
-  POLICY_KV?: KVNamespace;
+  POLICY_KV?: MinimalKV;
   /**
    * 可选：策略存储的 Upstash REST 地址（Vercel KV 即此协议，如 https://xxx.upstash.io）。
    * 与 KV_REST_API_TOKEN 同时配置时，策略跨实例持久；均未配置时退化为实例内存
