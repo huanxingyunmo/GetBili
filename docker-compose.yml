@@ -1,0 +1,29 @@
+# GetBili 自托管编排：docker compose up -d
+#
+# 首次使用：在同目录建一个 .env 文件（compose 自动读取）：
+#   ADMIN_TOKEN=你的管理令牌
+#   BILI_COOKIE=SESSDATA=xxx; bili_jct=xxx
+#   COOKIE_SECURE=false        # 仅当用 http://IP:8787 这类裸 HTTP 访问时需要
+#
+# 服务器有 TLS（nginx/Caddy 反代或域名证书）时去掉 COOKIE_SECURE 行更安全。
+
+services:
+  getbili:
+    build: .
+    image: getbili:latest
+    container_name: getbili
+    ports:
+      - "8787:8787"
+    restart: unless-stopped
+    environment:
+      # 必需：管理后台令牌（/adm 登录、Bearer 调用）
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?请在同目录 .env 中设置 ADMIN_TOKEN}
+      # 强烈建议：B 站登录态 Cookie，大幅降低风控概率（游客态部分接口会被拦）
+      BILI_COOKIE: ${BILI_COOKIE:-}
+      # 默认 true（附加 Secure）；裸 HTTP 访问必须设 false，否则浏览器拒存会话 Cookie
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      # 可选：Upstash / Vercel KV（REST 协议），接口公开策略跨容器重建持久
+      # KV_REST_API_URL: https://xxx.upstash.io
+      # KV_REST_API_TOKEN: xxx
+      # 可选：上游出口代理（B 站对数据中心 IP 风控时指向住宅/家宽 IP 的反代）
+      # UPSTREAM_PROXY_BASE: https://bili-proxy.example.com

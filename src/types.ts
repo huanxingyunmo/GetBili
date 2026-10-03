@@ -43,6 +43,13 @@ export interface Env {
    * 本地写入 .dev.vars；线上在平台环境变量中配置（Cloudflare secret / Vercel env）。
    */
   ADMIN_TOKEN?: string;
+  /**
+   * 会话 Cookie 是否附加 Secure 属性（默认附加，即只有显式 "false" 才关闭）。
+   * Cloudflare/Vercel 边缘恒为 HTTPS，无需配置；自托管（Docker/裸机）若通过
+   * 纯 HTTP 访问，浏览器会拒存 Secure Cookie 导致 /adm 无法登录，此时设为 "false"。
+   * 若容器前有 nginx/Caddy 提供 TLS 反代则保持默认 true。
+   */
+  COOKIE_SECURE?: string;
   /** 接口公开策略存储（Cloudflare KV namespace 绑定，仅 Workers 部署使用）。未绑定时回退其他后端 */
   POLICY_KV?: MinimalKV;
   /**

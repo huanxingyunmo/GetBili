@@ -85,7 +85,7 @@ adm.post('/login', async (c) => {
 // 登出只是清 cookie，无论当前是否登录都幂等返回成功
 adm.post('/logout', (c) =>
   jsonResponse({ code: 0, message: 'ok', data: null }, 200, {
-    'Set-Cookie': clearSessionCookieValue(),
+    'Set-Cookie': clearSessionCookieValue(c.env),
   }),
 );
 

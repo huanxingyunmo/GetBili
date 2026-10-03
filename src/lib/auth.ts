@@ -136,16 +136,28 @@ export async function hasAdminAccess(env: Env, headers: Headers): Promise<boolea
   return hasValidSession(env, headers);
 }
 
+/**
+ * 会话 Cookie 的 Secure 后缀：默认附加；仅当 env.COOKIE_SECURE 显式为 "false"
+ * 时省略。背景：自托管（Docker/裸机）经纯 HTTP 访问时，浏览器会拒存带
+ * Secure 的 Cookie，导致 /adm 登录静默失败；边缘平台（Cloudflare/Vercel）
+ * 与 TLS 反代场景不受影响，保持默认即可。
+ */
+function secureSuffix(env: Env): string {
+  return env.COOKIE_SECURE === 'false' ? '' : '; Secure';
+}
+
 export async function createSessionCookieValue(env: Env, maxAgeSec: number = SESSION_MAX_AGE): Promise<string> {
   const expMs = Date.now() + maxAgeSec * 1000;
   const sig = await signHex(env, String(expMs));
   if (sig === null) throw new Error('ADMIN_TOKEN 未配置，无法签发管理会话');
   const value = `${expMs}.${sig.slice(0, SIG_LEN)}`;
-  return `${SESSION_COOKIE}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}; Secure`;
+  return `${SESSION_COOKIE}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}${secureSuffix(env)}`;
 }
 
-export function clearSessionCookieValue(): string {
-  return `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Secure`;
+/** 生成清除会话 Cookie 的 Set-Cookie 值；env 可选（省略时保留 Secure，与历史行为一致） */
+export function clearSessionCookieValue(env?: Env): string {
+  const suffix = env === undefined ? '; Secure' : secureSuffix(env);
+  return `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${suffix}`;
 }
 
 export function requireAdmin(): MiddlewareHandler {

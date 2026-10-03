@@ -1,12 +1,12 @@
 # Project: GetBili
 
-哔哩哔哩（Bilibili）信息 API 服务：主部署目标为 **Vercel Edge Functions**（兼容 Cloudflare Workers），通过 HTTP 接口获取视频详情、播放地址（DASH 直链）、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹。
+哔哩哔哩（Bilibili）信息 API 服务：主部署目标为 **Docker 自托管**（跑自己的服务器，出口 IP 干净，绕开 B 站对 serverless 平台的 IP 风控），兼容 Vercel Edge Functions 与 Cloudflare Workers，通过 HTTP 接口获取视频详情、播放地址（DASH 直链）、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹。
 
 服务本身不代理视频流量，只返回结构化元数据与可直连的流地址。
 
 ## 技术栈
 
-- 语言/运行时：TypeScript 5/7；主运行时 **Vercel Edge Functions**（Web 标准 API：crypto.subtle / AbortSignal.timeout / fetch），兼容 Cloudflare Workers（workerd）
+- 语言/运行时：TypeScript 5/7；主运行时 **Docker 自托管（Node + @hono/node-server）**，兼容 Vercel Edge Functions 与 Cloudflare Workers（workerd）；全部业务代码只用 Web 标准 API（crypto.subtle / AbortSignal.timeout / fetch）
 - 框架/核心库：Hono 4（路由）、零运行时依赖（WBI 签名、设备指纹、protobuf 弹幕解析全部自实现）
 - 构建/包管理：pnpm 11；本地开发用 `tsx`（Node 直跑）+ `@hono/node-server`；部署 Vercel 用 `vercel` CLI / GitHub 集成，Cloudflare 用 wrangler 4
 - 测试：`node scripts/md5-check.mjs`（MD5 回归）+ `node scripts/smoke.mjs`（全接口真实上游冒烟）+ `scripts/ui-check.mjs`（内联页面离线检查）
@@ -40,20 +40,26 @@
 - `scripts/ui-check.mjs` —— 内联页面离线检查（ui + adm + disguise 共 28 项，无需起服务）
 - `scripts/ui-e2e.mjs` —— CDP 真实浏览器端到端（15 项，需先起 pnpm dev + 无头 Chrome，浏览器内先登录 /adm）
 - `scripts/debug-upstream.ts` —— 调试夹具：直接打上游并打印原始响应，排查字段映射/风控必备
+- `scripts/server.ts` —— 生产入口（Docker/自托管）：监听 0.0.0.0，PORT/HOST 可覆盖，esbuild 打包为自包含单文件
+- `Dockerfile` / `.dockerignore` / `docker-compose.yml` —— Docker 自托管三件套（两阶段构建，最终镜像仅 alpine + 单文件；敏感的 .dev.vars/.env 被 dockerignore 排除）
 - `docs/API.md` —— 完整接口文档
-- `wrangler.toml` —— Worker 配置与环境变量
+- `vercel.json` —— Vercel rewrites 配置（serverless 备选）
+- `wrangler.toml` —— Worker 配置与环境变量（备用）
 
 ## 工作流
 
 ```bash
 pnpm install          # 安装依赖（见下方「pnpm 安装」注意事项）
 pnpm dev              # 本地预览：Node 直跑 Hono（tsx scripts/dev-node.ts），默认 http://127.0.0.1:8787
+pnpm build:node       # esbuild 打包生产入口 -> dist/server.mjs（自包含单文件，容器运行产物）
+pnpm docker:build     # 构建自托管镜像（两阶段，最终仅 alpine + Node + 单文件）
+pnpm docker:run       # 以 .dev.vars 为环境变量源启动容器（COOKIE_SECURE=false 已内置）
 pnpm typecheck        # tsc --noEmit，必须为 0 错误
 pnpm test             # MD5 回归测试
 pnpm smoke            # 全接口冒烟（需先起 pnpm dev）
 pnpm ui:check         # 内联页面离线检查（28 项）
 pnpm debug:upstream   # 直接打上游看原始响应
-pnpm deploy           # 部署到 Vercel（npx vercel --prod）
+pnpm deploy           # 部署到 Vercel（npx vercel --prod，serverless 备选）
 pnpm deploy:cf        # 部署到 Cloudflare Workers（备用）
 ```
 
@@ -170,11 +176,18 @@ B 站风控有**两类**「伪成功」响应，都会让调用方拿到看起�
 
 **内联页面三约定（血泪教训，三个页面都适用）**：整页 HTML 是一个模板字面量导出；内层 JS 禁止嵌套模板字面量与一切反斜杠（正则、`\n`、转义引号全不行）；动态文本一律 `textContent`/`createTextNode` 禁止 `innerHTML`。离线检查由 `scripts/ui-check.mjs` 把关（含 `vm.Script` 语法解析），违反约定的代码过不了它。
 
-### 平台适配：Vercel Edge（2026-09-30 切换，主部署方式）
+### 平台适配：Docker 自托管（2026-10-03 起，主部署方式）
+
+- **生产入口** `scripts/server.ts`：与 dev-node.ts 同构但监听 `0.0.0.0`（容器内绑 127.0.0.1 外部无法访问——Docker 第一坑）、`PORT`/`HOST` 可覆盖、`.dev.vars` 仅作兼容加载（容器内无此文件静默跳过）。
+- **镜像**：两阶段构建——build 阶段 pnpm install（corepack pnpm@11.9.0，与 lockfile 生成端一致）+ esbuild bundle `scripts/server.ts` → 自包含单文件；运行阶段仅 `node:22-alpine` + `server.mjs`（~244KB 产物，零 node_modules）。内置 HEALTHCHECK 打 `/api/health`。
+- **COOKIE_SECURE 坑**：Set-Cookie 原硬编码 `Secure`，裸 HTTP（`http://IP:8787`）浏览器拒存会话 Cookie → /adm 登录静默失败。已加 `COOKIE_SECURE` 环境变量（默认 true，显式 "false" 关闭；有 TLS 反代/边缘平台保持默认）。`clearSessionCookieValue(env?)` 同步适配（logout）。
+- **验证方式（本机无 Docker 时）**：`pnpm build:node` 后直接 `node dist/server.mjs`——与容器内运行同一份产物同一语义；实测 health/伪装/登录/COOKIE_SECURE 两态 + smoke 38/38 全绿。
+
+### 平台适配：Vercel Edge（2026-09-30 切换，现为 serverless 备选）
 
 - **入口**：`api/index.ts`（`export const config = { runtime: 'edge' }`）+ `vercel.json` 的 rewrites `/(.*) → /api/index`。**rewrite 保留原始 URL**，Hono 拿到的是浏览器请求路径，直接路由 /、/ui、/adm、/api/*。
 - **c.env 的关键差异**：Workers 平台 env 来自绑定对象；Hono 的 `app.fetch(req, env)` 第二参即 c.env。Vercel 的 handle 不传 env，所以入口里显式 `app.fetch(req, process.env)`——**所有 c.env.XXX 在两平台行为一致**。
-- **类型环境**：tsconfig types 只有 @cloudflare/workers-types（不引 @types/node 避免全局类型冲突）。因此 api/index.ts 里 `process` 用局部 declare；`scripts/dev-node.ts` 用了 node:fs，**故意不进 tsconfig include**（tsx 只转译不查类型，运行无碍）。
+- **类型环境（2026-10-02 起）**：tsconfig `types: []` + `lib: [ES2022, DOM, DOM.Iterable]`——不再引用 @cloudflare/workers-types（Vercel 构建安装集不含它，TS2688），Web 标准 API 类型由 lib DOM 提供。KV 类型用 `src/types.ts` 导出的 `MinimalKV`（get/put 最小面）——**教训：Vercel 用 TS7 从 api/index.ts 沿 import 依赖图构建类型检查程序，无人 import 的全局 .d.ts 不在程序内（TS2304），类型必须随 import 链可达**。api/index.ts 里 `process` 用局部 declare；`scripts/*.ts`（dev-node/server）用了 node:fs，**故意不进 tsconfig include**（tsx/esbuild 只转译不查类型，运行无碍）。
 - **策略存储三后端抽象**（src/lib/policy.ts）：Upstash REST（`KV_REST_API_URL/KV_REST_API_TOKEN`，Vercel KV 即此协议）> Cloudflare KV（POLICY_KV，仅 Workers）> 实例内存兜底。内存兜底下策略在 serverless 多实例/冷启动会漂移——个人用可接受，生产配 Upstash。
 - **本地开发**：`pnpm dev` = `tsx scripts/dev-node.ts`（@hono/node-server），启动时读 `.dev.vars` 注入 process.env（KEY=VALUE，剥引号），与 wrangler dev 行为等价；smoke 38 项在该模式下全绿。
 - **Vercel 出口 IP 同样是数据中心段**（AWS），B 站风控是否放行需部署后实测；被 ban 时配 `UPSTREAM_PROXY_BASE` 出口代理（README 有 nginx 配置示例），该机制平台无关。

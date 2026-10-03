@@ -6,6 +6,9 @@
   "description": "Bilibili info API service (Vercel Edge / Cloudflare Workers compatible) for video info, play URLs, danmaku and more",
   "scripts": {
     "dev": "tsx scripts/dev-node.ts",
+    "build:node": "esbuild scripts/server.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/server.mjs",
+    "docker:build": "docker build -t getbili:latest .",
+    "docker:run": "docker run -d --name getbili -p 8787:8787 --env-file .dev.vars -e COOKIE_SECURE=false getbili:latest",
     "deploy": "npx -y vercel --prod",
     "deploy:cf": "wrangler deploy",
     "typecheck": "tsc --noEmit",

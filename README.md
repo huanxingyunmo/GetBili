@@ -1,6 +1,6 @@
 # GetBili — 哔哩哔哩信息 API 服务
 
-基于 **Hono 4 + TypeScript** 的哔哩哔哩（Bilibili）信息聚合接口服务，主部署目标为 **Vercel Edge Functions**（亦兼容 Cloudflare Workers）。通过统一的 HTTP 接口获取视频详情、DASH 播放直链、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹，全部接口返回统一 JSON 信封。
+基于 **Hono 4 + TypeScript** 的哔哩哔哩（Bilibili）信息聚合接口服务，主部署目标为 **Docker 自托管**（亦支持 Vercel Edge Functions 与 Cloudflare Workers）。通过统一的 HTTP 接口获取视频详情、DASH 播放直链、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹，全部接口返回统一 JSON 信封。
 
 > 本项目只做「信息读取 + 地址解析」，不代理、不转发、不缓存任何音视频与图片资源。播放地址直接返回 B 站 CDN 直链，由调用方自行访问。
 
@@ -108,7 +108,32 @@ pnpm dev            # 本地预览（Node 直跑 Hono），默认 http://127.0.0
 
 启动后访问 `http://127.0.0.1:8787/` —— 未登录时**伪装成 Cloudflare 404 错误页**（这是预期行为，用于隐藏服务存在）。用 `ADMIN_TOKEN` 登录 `/adm` 后，`/`、`/api`、`/ui` 才会正常展示。
 
-### 部署到 Vercel（推荐，当前主部署方式）
+### 部署到 Docker（推荐：跑在自己的服务器/家宽上，出口 IP 干净，绕开 B 站对 serverless 平台的 IP 风控）
+
+```bash
+# 1. 在项目根目录建 .env（compose 自动读取；切勿提交到仓库）
+cat > .env <<'EOF'
+ADMIN_TOKEN=换成你的管理令牌
+BILI_COOKIE=SESSDATA=xxx; bili_jct=xxx
+# 用 http://IP:8787 这类裸 HTTP 访问时必须加这行，否则浏览器拒存会话 Cookie、/adm 无法登录
+COOKIE_SECURE=false
+EOF
+
+# 2. 构建并启动（两阶段构建，最终镜像仅 alpine + Node + 单文件产物）
+docker compose up -d --build
+
+# 3. 验证
+curl http://127.0.0.1:8787/api/health          # {"code":0,...,"status":"ok"}
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8787/   # 404 = 伪装页正常
+```
+
+不用 compose 也可以：`pnpm docker:build && pnpm docker:run`（等价 build + run，自动带 `--env-file .dev.vars`）。
+
+容器细节：默认监听 `0.0.0.0:8787`（`PORT`/`HOST` 可覆盖）；内置 HEALTHCHECK（`/api/health`）；产物是 esbuild 打包的自包含单文件，运行镜像不需要 `node_modules`。
+
+> 部署在国内 VPS / 家宽环境时出口 IP 通常不被 B 站风控覆盖，一般无需配置「出口代理」；若部署在海外数据中心 VPS 上仍遇 `-412`，再参考下文出口代理方案。
+
+### 部署到 Vercel（serverless 备选）
 
 ```bash
 # 方式一：CLI（首次会引导登录并关联项目）
@@ -128,7 +153,7 @@ pnpm deploy                                     # = npx vercel --prod
 | `BILI_COOKIE` | 可选：B 站登录态 Cookie（`SESSDATA=xxx; bili_jct=xxx`） |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | 可选：接口策略的持久化存储（Vercel KV / Upstash REST）。不配则策略仅存于实例内存，多实例/冷启动会漂移 |
 
-> 注意：Vercel（及一切 serverless 平台）的出口 IP 同样是数据中心段，B 站 IP 级风控是否放行需实测——若线上接口持续返回 `-412 request was banned`，请配置下文的「出口代理」。
+> 注意：Vercel（及一切 serverless 平台）的出口 IP 同样是数据中心段，B 站 IP 级风控是否放行需实测——若线上接口持续返回 `-412 request was banned`，请配置下文的「出口代理」或改用上方 Docker 自托管。
 
 ### 部署到 Cloudflare Workers（备用，历史方式）
 
@@ -158,7 +183,7 @@ pnpm exec wrangler secret put BILI_COOKIE
 
 ### 环境变量
 
-环境变量（本地写 `.dev.vars`，线上在平台配置——Vercel Settings → Environment Variables / Cloudflare secrets）：
+环境变量（本地写 `.dev.vars`，线上在平台配置——Docker 用 `.env` / `docker run -e`，Vercel Settings → Environment Variables / Cloudflare secrets）：
 
 | 变量名 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -169,9 +194,10 @@ pnpm exec wrangler secret put BILI_COOKIE
 | `ADMIN_TOKEN` | **敏感** | 无 | `/adm` 管理后台令牌；配置后启用登录、`/ui` 与首页门槛、接口策略管理。**勿提交进仓库** |
 | `BILI_COOKIE` | **敏感** | 无 | 登录态 Cookie，**勿提交进仓库** |
 | `BILI_UA` | 普通变量 | 内置 Chrome UA | 自定义 User-Agent |
+| `COOKIE_SECURE` | 普通变量 | `"true"` | 会话 Cookie 是否附加 `Secure`。**裸 HTTP 自托管（如 `http://IP:8787`）必须设 `false`**，否则浏览器拒存 Cookie、`/adm` 无法登录；有 TLS（反代/边缘平台）时保持默认 |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | 普通变量 + **敏感** | 无 | 可选：接口策略持久化（Vercel KV / Upstash REST 协议）；不配则策略存实例内存 |
 
-Cloudflare Workers 专用：`POLICY_KV`（KV namespace 绑定，见 `wrangler.toml`）。
+Docker 专用：`PORT`（容器监听端口，默认 8787）、`HOST`（监听地址，默认 `0.0.0.0`）。Cloudflare Workers 专用：`POLICY_KV`（KV namespace 绑定，见 `wrangler.toml`）。
 
 ---
 
@@ -340,12 +366,15 @@ UPSTREAM_PROXY_BASE = "https://bili-proxy.example.com"
 | 脚本 | 命令 | 说明 |
 | --- | --- | --- |
 | `pnpm dev` | `tsx scripts/dev-node.ts` | 本地预览（Node 直跑 Hono），默认 `http://127.0.0.1:8787` |
+| `pnpm build:node` | esbuild 打包 `scripts/server.ts` | 产出自包含单文件 `dist/server.mjs`（Docker 镜像的运行产物） |
+| `pnpm docker:build` | `docker build -t getbili:latest .` | 构建自托管镜像（两阶段，最终镜像仅 alpine + 单文件） |
+| `pnpm docker:run` | `docker run ...` | 用 `.dev.vars` 作为环境变量源启动容器（`COOKIE_SECURE=false` 已内置） |
 | `pnpm typecheck` | `tsc --noEmit` | TypeScript 类型检查 |
 | `pnpm test` | `node scripts/md5-check.mjs` | MD5 回归测试（RFC 1321 官方向量） |
 | `pnpm smoke` | `node scripts/smoke.mjs` | 全接口冒烟测试（**需先起 `pnpm dev`**） |
 | `pnpm ui:check` | `node scripts/ui-check.mjs` | 内联页面离线检查（28 项，无需起服务） |
 | `pnpm debug:upstream` | esbuild 打包后运行 | 直接打上游看原始响应，排查字段映射 |
-| `pnpm deploy` | `npx vercel --prod` | 部署到 Vercel（主方式） |
+| `pnpm deploy` | `npx vercel --prod` | 部署到 Vercel（serverless 备选） |
 | `pnpm deploy:cf` | `wrangler deploy` | 部署到 Cloudflare Workers（备用） |
 | `pnpm check` | `typecheck && test` | 类型检查 + 单测 |
 

@@ -1,0 +1,28 @@
+# 依赖与构建产物（镜像内重新安装/生成）
+node_modules/
+dist/
+.tmp/
+
+# 版本控制与本地工具状态
+.git/
+.wrangler/
+.vercel/
+.workbuddy/
+.idea/
+.vscode/
+
+# 敏感文件：绝不进镜像
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+
+# 文档与截图（运行不需要）
+docs/
+*.png
+*.md
+!README.md
+
+# 杂项
+*.log
+.DS_Store
