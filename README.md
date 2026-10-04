@@ -299,6 +299,8 @@ ADMIN_TOKEN=dev-admin-token
 
 **缓解方式**：配置环境变量 `UPSTREAM_PROXY_BASE`（普通变量，写在 `wrangler.toml` 的 `[vars]`），指向一台**住宅/国内 IP** 的反向代理，所有上游请求会被重写到该地址（请求头、Cookie、WBI 签名全部保持不变，代理不理解任何业务）。
 
+**为什么不能像网易云 API 那样伪造 IP 头绕过**：参考 [api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) 的做法——网易服务端**信任** `X-Real-IP`/`X-Forwarded-For` 请求头，客户端伪造一个中国 IP（从真实中国网段加权随机生成）即可绕开地域/风控。本项目已移植同款机制（`FAKE_CN_IP=true` 开启，向全部上游请求注入伪造中国 IP），但 **2026-10-04 在 Cloudflare 线上做了 A/B 实测（关闭态/开启态各 3 次）均为 `-412`**——B 站风控以 TCP 连接对端的真实源 IP 为准，不信任这两个头。结论：B 站的 IP 风控是「出口信誉」问题而非「地域标签」问题，**伪造头无效，必须换真实出口**（即本节的家宽/国内 IP 反代方案，或直接 Docker 跑在家里）。代码保留该开关仅供未来网关行为变化时复测。
+
 代理端（nginx）最小配置示例——关键是把 Host/SNI 指回真实 B 站域名：
 
 ```nginx

@@ -8,7 +8,7 @@
 import type { BiliEnvelope, Env } from '../types';
 import { BiliError, biliCodeToStatus, upstreamError } from './errors';
 import { fingerprintToCookieString, getFingerprint } from './fingerprint';
-import { API_BASE, rewriteUpstreamUrl } from './upstream';
+import { API_BASE, applyFakeCnIp, rewriteUpstreamUrl } from './upstream';
 
 export const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
@@ -52,7 +52,11 @@ export interface FetchOptions {
   headers?: Record<string, string>;
 }
 
-/** 组装标准请求头 */
+/**
+ * 中国 IP 伪造（FAKE_CN_IP 实验）的实现统一放在 ./upstream 叶子模块：
+ * fingerprint.ts 的裸 fetch 也必须注入同一个 IP（不能 import request，会循环依赖），
+ * 且所有到 B 站的请求 IP 必须一致，否则「部分真实 IP + 部分伪造 IP」等于自报机器伪装。
+ */
 export function buildHeaders(env: Env, opts: FetchOptions = {}): Record<string, string> {
   const headers: Record<string, string> = {
     'User-Agent': getUserAgent(env),
@@ -62,6 +66,7 @@ export function buildHeaders(env: Env, opts: FetchOptions = {}): Record<string, 
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     ...opts.headers,
   };
+  applyFakeCnIp(env, headers);
   const cookie = getCookieString(env, opts.cookie);
   if (cookie) {
     headers.Cookie = cookie;

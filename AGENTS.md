@@ -192,6 +192,13 @@ B 站风控有**两类**「伪成功」响应，都会让调用方拿到看起�
 - **本地开发**：`pnpm dev` = `tsx scripts/dev-node.ts`（@hono/node-server），启动时读 `.dev.vars` 注入 process.env（KEY=VALUE，剥引号），与 wrangler dev 行为等价；smoke 38 项在该模式下全绿。
 - **Vercel 出口 IP 同样是数据中心段**（AWS），B 站风控是否放行需部署后实测；被 ban 时配 `UPSTREAM_PROXY_BASE` 出口代理（README 有 nginx 配置示例），该机制平台无关。
 
+### 伪造 IP 头实验（借鉴 api-enhanced，实测对 B 站无效）
+
+- **对方的机制**（NeteaseCloudMusicApiEnhanced/api-enhanced）：网易服务端信任 `X-Real-IP`/`X-Forwarded-For` 头 → 从真实中国 IP 段表（CIDR 文件）加权随机生成中国 IP → 注入双头 → 绕开地域/风控。这是网易系有效而 B 站无效的根本差异：**网易的 IP 风控是「地域标签」问题（改标签即可），B 站是「出口信誉」问题（必须真换出口）**。
+- **本项目的移植**：`src/lib/upstream.ts` 的 `applyFakeCnIp()`（内嵌中国主干 CIDR 段加权随机，模块级缓存每实例一个 IP）+ `FAKE_CN_IP` 环境变量开关；request.ts 的 buildHeaders 与 fingerprint.ts 的三处裸 fetch 全部接入——**所有上游请求必须带同一个 IP**，否则真假混用等于自报伪装。本地 echo 服务器验证注入覆盖完整。
+- **线上 A/B 实测（2026-10-04，CF Workers）**：关闭态 3 次 / 开启态 3 次全部 `-412` → **B 站不信任这两个头**，伪造无效。代码保留（默认关闭，零副作用），wrangler.toml 标注结论，未来网关行为变化时可复测。
+- 经验：跨站点的风控绕过手法不能想当然移植——网易信任透传头是因为其网关架构，B 站自建 CDN 直接读 TCP 对端。**判断「头可否伪造」的唯一方法是脏 IP 出口上的 A/B 实验**。
+
 ### 其他约定
 
 - 未登录时 `playurl` 附加 `try_look=1`（受 `TRY_LOOK` 环境变量控制），可预览更高清晰度；`acceptQuality[].available` 反映的是**当前身份实际能拿到的流**，游客通常只有 480P/360P，这是真实反映而非 bug

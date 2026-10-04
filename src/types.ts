@@ -50,6 +50,13 @@ export interface Env {
    * 若容器前有 nginx/Caddy 提供 TLS 反代则保持默认 true。
    */
   COOKIE_SECURE?: string;
+  /**
+   * 实验性：向上游注入伪造的 X-Real-IP / X-Forwarded-For 中国 IP（默认关闭，显式 "true" 开启）。
+   * 手法借鉴 NeteaseCloudMusicApiEnhanced/api-enhanced 对网易的绕过：网易服务端信任这两个头，
+   * 伪造中国 IP 可绕开地域/风控。B 站是否同样信任未经证实（其风控大概率以 TCP 对端 IP 为准），
+   * 仅为数据中心出口场景的对照实验开关——有效则作为出口代理的低成本替代，无效则关闭即可。
+   */
+  FAKE_CN_IP?: string;
   /** 接口公开策略存储（Cloudflare KV namespace 绑定，仅 Workers 部署使用）。未绑定时回退其他后端 */
   POLICY_KV?: MinimalKV;
   /**

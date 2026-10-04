@@ -19,7 +19,7 @@
 
 import type { Env } from '../types';
 import { md5Hex } from './md5';
-import { rewriteUpstreamUrl } from './upstream';
+import { applyFakeCnIp, rewriteUpstreamUrl } from './upstream';
 
 export interface Fingerprint {
   buvid3: string;
@@ -138,12 +138,12 @@ async function fetchBiliTicket(
     });
     const res = await fetch(rewriteUpstreamUrl(env, `${TICKET_URL}?${query.toString()}`), {
       method: 'POST',
-      headers: {
+      headers: applyFakeCnIp(env, {
         'User-Agent': userAgent,
         Referer: 'https://www.bilibili.com/',
         Origin: 'https://www.bilibili.com',
         Cookie: `buvid3=${buvid3}`,
-      },
+      }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     const json = (await res.json()) as {
@@ -170,11 +170,11 @@ async function fetchJson<T>(
 ): Promise<T | null> {
   try {
     const res = await fetch(rewriteUpstreamUrl(env, url), {
-      headers: {
+      headers: applyFakeCnIp(env, {
         'User-Agent': userAgent,
         Referer: 'https://www.bilibili.com/',
         Accept: 'application/json, text/plain, */*',
-      },
+      }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     return (await res.json()) as T;
@@ -205,7 +205,7 @@ async function fetchFingerprint(env: Env, userAgent: string): Promise<Fingerprin
   if (!buvid3) {
     try {
       const res = await fetch(rewriteUpstreamUrl(env, HOME_URL), {
-        headers: { 'User-Agent': userAgent },
+        headers: applyFakeCnIp(env, { 'User-Agent': userAgent }),
         signal: AbortSignal.timeout(timeoutMs),
       });
       const setCookie = res.headers.get('set-cookie') ?? '';

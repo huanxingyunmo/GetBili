@@ -2,7 +2,7 @@ name = "getbili"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 
-# ⚠️ 当前主部署方式为 Vercel（见 vercel.json 与 api/index.ts），本文件仅用于
+# ⚠️ 当前主部署方式为 Docker 自托管（见 Dockerfile / docker-compose.yml），本文件仅用于
 # pnpm deploy:cf 备用部署。两平台共享同一套代码与 Env（差异见 src/lib/policy.ts 抽象）。
 
 # 是否允许跨域访问（默认 "true"）。部署后如需收紧，改成具体域名，如 "https://example.com"
@@ -13,6 +13,12 @@ REQUEST_TIMEOUT_MS = "15000"
 
 # 未登录时使用 try_look=1 预览高清晰度（B 站行为），默认开启
 TRY_LOOK = "true"
+
+# 实验性：伪造 X-Real-IP / X-Forwarded-For 中国 IP（借鉴 api-enhanced 对网易的手法）。
+# 【2026-10-04 线上 A/B 实测结论：对 B 站无效】—— 关闭态与开启态各 3 次均为 -412，
+# B 站风控以 TCP 对端真实源 IP 为准，不信任这两个头（网易信任所以 api-enhanced 有效）。
+# 开关保留用于未来网关行为变化时复测，平时保持 false。
+FAKE_CN_IP = "false"
 
 # 上游出口代理（可选）。B 站对 Cloudflare Workers 出口 IP 做 IP 级风控（-412 request was banned），
 # 线上直连拿不到任何数据时，把它配置为一台住宅/国内 IP 反向代理的基址（如 "https://bili.example.com"），
