@@ -145,7 +145,7 @@ pnpm deploy                                     # = npx vercel --prod
 # 方式二：GitHub 集成 —— 在 vercel.com 导入仓库，环境变量在项目 Settings → Environment Variables 配置
 ```
 
-**函数区域已钉在 `hkg1`（香港）**：`vercel.json` 只有一行 `"regions": ["hkg1"]` —— Vercel 项目默认区域是 `iad1`（美国华盛顿特区），而**区域配置只对 Node.js 运行时的函数生效**；Edge 函数跑在全球 PoP、按请求就近执行，出口 IP 无从控制，对 B 站「出口信誉」型风控最不利。Vercel 侧完全交给它的**零配置 Hono 预设**：`src/index.ts` 直接 `export default app`，Vercel 自动打成一个 Node 函数，路由全由 Hono 处理——所以**不要**再自建 `api/index.ts`，也不要加 rewrites（`@vercel/node` 是逐文件 tsc 转译、不打 bundle，无扩展名相对导入会在运行时 `ERR_MODULE_NOT_FOUND`，表现为全站 500），也别把入口文件改名成 `worker.ts` 之类（预设只认 `app|index|server` 白名单，否则 `[BUILD_FAILED] No entrypoint found`）。想换东京/新加坡等其它非美区，只改 region 代码即可（`hnd1`/`kix1` 日本、`sin1` 新加坡、`icn1` 首尔；Hobby 只允许单区域，Pro 最多 5 个）。环境变量（`ADMIN_TOKEN` / `BILI_COOKIE` / `KV_REST_API_*`）来自 `process.env`：预设调 `app.fetch(req)` 不传 env，入口里已用最外层中间件把 `process.env` 合并进 `c.env`，业务代码照旧只读 `c.env`。
+**函数区域钉在 `hkg1`（香港），且必须走显式函数入口**：`vercel.json` 是 `"framework": null` + `"regions": ["hkg1"]` + rewrites 到 `/api/index`。Vercel 项目默认区域是 `iad1`（美国华盛顿特区），而**区域配置只对 Node.js 运行时的函数生效**；更要紧的是 Vercel 的「Hono 零配置预设」虽然能跑，但**实测不认 `regions`**（同一份配置下预设施行的请求 id 是 `hnd1::` 东京，而 `api/index.ts` 这条路是 `hkg1::`）。B 站对出口 IP 极敏感，所以 `framework: null` 是必需的。三条硬约束：① 入口必须是 `api/index.ts`（不要把业务入口搬进 `api/` 之外靠预设，也别让入口文件叫 `worker.ts`）；② 项目内相对 import 必须带 `.js` 后缀（Vercel 逐文件转译 `.ts`→`.js` 且不改写 import，无扩展名会 `ERR_MODULE_NOT_FOUND`）；③ 环境变量来自 `process.env`，入口显式 `app.fetch(req, process.env)`，同时 `src/index.ts` 还有一层把 `process.env` 合并进 `c.env` 的兜底中间件。想换东京/新加坡等其它区域，只改 region 代码（`hnd1`/`kix1` 日本、`sin1` 新加坡、`icn1` 首尔；Hobby 只允许单区域，Pro 最多 5 个）。
 
 **必须配置的环境变量**（本地 `.dev.vars` 的等价物，线上在平台配置，勿写进仓库）：
 

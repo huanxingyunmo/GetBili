@@ -43,7 +43,7 @@
 - `scripts/server.ts` —— 生产入口（Docker/自托管）：监听 0.0.0.0，PORT/HOST 可覆盖，esbuild 打包为自包含单文件
 - `Dockerfile` / `.dockerignore` / `docker-compose.yml` —— Docker 自托管三件套（两阶段构建，最终镜像仅 alpine + 单文件；敏感的 .dev.vars/.env 被 dockerignore 排除）
 - `docs/API.md` —— 完整接口文档
-- `vercel.json` —— Vercel 配置：**只有** `regions: ["hkg1"]`（出口钉香港；不写 rewrites、不写 framework，原因见下文 Vercel 章节）
+- `vercel.json` —— Vercel 配置：`framework: null`（关掉 Hono 零配置预设，否则不认 regions）+ `regions: ["hkg1"]`（出口钉香港）+ rewrites（全部路径 → `/api/index`）
 - `wrangler.toml` —— Worker 配置与环境变量（备用）
 
 ## 工作流
@@ -186,14 +186,20 @@ B 站风控有**两类**「伪成功」响应，都会让调用方拿到看起�
 ### 平台适配：Vercel Functions Node.js 运行时（2026-10-24 由 Edge 切换，现为 serverless 备选）
 
 - **为什么从 Edge 切到 Node 运行时**：`vercel.json` 的 `regions` **只对 Node.js 运行时的函数生效**，Edge 函数跑在全球 100+ PoP、按请求就近执行，执行位置与出口 IP 都不可控（旧 changelog 里「regional edge functions」已随 Edge Runtime 弃用）。本项目要的是出口 IP 稳定落在非美区机房（默认 region 是 `iad1` 华盛顿特区），所以必须用 Node 运行时才能钉区域。
-- **最终形态（2026-10-24 定稿）：交给 Vercel 的 Hono 零配置预设，不再自建 `api/index.ts`**。`src/index.ts` 直接 `export default app`，Vercel 自动把它打成一个 Node 函数（构建产物里 `path: "/"`、`runtime: nodejs24.x`、`regions: ["hkg1"]`），路由全部由 Hono 处理，所以 `vercel.json` 里**不要 rewrites**（`api/` 目录也已删除）。
+- **最终形态（2026-10-24 定稿）：`framework: null` + `api/index.ts` + rewrites —— 只有这样才能把区域钉住**。Vercel 的 Hono 零配置预设确实能跑（它把 `src/index.ts` 打成 `path: "/"` 的函数），但实测**它不认 `regions`**：同一份配置下预设那条路的请求 id 是 `hnd1::`（东京），而 `api/index.ts` + rewrites 这条路的构建产物明写 `regions: ["hkg1"]`、id 也是 `hkg1::`。B 站对出口 IP 极敏感，香港与东京的实际风控表现不同，所以必须走显式函数。`api/index.ts` 只做一件事：`export default { fetch(req) { return app.fetch(req, process.env) } }`，业务全在 `src/index.ts`。
 - **坑 1（2026-10-24 实测定位）：Vercel 逐文件 tsc 转译、不打 bundle**。日志实证：`Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/var/task/src/lib/http' imported from '/var/task/src/index.js'` —— `.ts` 被一个文件一个文件转成 `.js`（连 Hono 零配置预设也是这样），**import 说明符原样保留**，无扩展名的相对导入在 Node ESM 下必然解析失败 → 全站 `500 FUNCTION_INVOCATION_FAILED`。**修法：`src/` 里所有相对 import 都带 `.js` 后缀**（85 处，`from './lib/http.js'`）；TS 的 `moduleResolution: bundler` 接受，esbuild/tsx/wrangler 会把 `.js` 映射回 `.ts`，只有「逐文件转译 + 原生 ESM」这一路才需要它。本地验证法：`tsc -p tsconfig.json --noEmit false --outDir .tsout` 后 `import('./.tsout/src/index.js')`，改前 `ERR_MODULE_NOT_FOUND`、改后 200。
 - **坑 2：预设调 `app.fetch(req)` 不传第二个参数**，`c.env` 是空对象 → `Cannot read properties of undefined (reading 'CORS_ORIGIN')`，全站 500（连伪装页都出不来）。已修：`src/index.ts` 最外层第一个中间件把 `process.env` 合并进 `c.env`（`typeof process === 'undefined'` 守卫，Workers/workerd 完全不受影响，wrangler.toml 也没开 nodejs_compat）。业务代码继续只读 `c.env`，三平台语义一致。
-- **入口文件名必须留在白名单里**：`app|index|server.{js,cjs,mjs,ts,cts,mts}`（根目录或 `src/`）。改成 `src/worker.ts` 这类名字会直接 `[BUILD_FAILED] No entrypoint found` —— 所以入口就叫 `src/index.ts`，别改名。
+- **不要再切回「预设直吃 `src/index.ts`」**：那条路要求入口叫 `app|index|server.{js,ts,...}`（改名直接 `[BUILD_FAILED] No entrypoint found`）、会额外生成一个不传 env 的 `path: "/"` 函数（见坑 2）、并且不认 `regions`。`"framework": null` 把这条捷径关掉，只留 `api/` + rewrites 一条路；`api/index.ts` 的 import 也必须写 `.js` 后缀（见坑 1）。
 - **类型环境（2026-10-02 起）**：tsconfig `types: []` + `lib: [ES2022, DOM, DOM.Iterable]`——不再引用 @cloudflare/workers-types（Vercel 构建安装集不含它，TS2688），Web 标准 API 类型由 lib DOM 提供。KV 类型用 `src/types.ts` 导出的 `MinimalKV`（get/put 最小面）——**教训：Vercel 用 TS7 沿 import 依赖图构建类型检查程序，无人 import 的全局 .d.ts 不在程序内（TS2304），类型必须随 import 链可达**。`src/index.ts` 里 `process` 用局部 declare（Vercel 预设不传 env，用它兜底）；`scripts/*.ts`（dev-node/server）用了 node:fs，**故意不进 tsconfig include**（tsx/esbuild 只转译不查类型，运行无碍）。
 - **策略存储三后端抽象**（src/lib/policy.ts）：Upstash REST（`KV_REST_API_URL/KV_REST_API_TOKEN`，Vercel KV 即此协议）> Cloudflare KV（POLICY_KV，仅 Workers）> 实例内存兜底。内存兜底下策略在 serverless 多实例/冷启动会漂移——个人用可接受，生产配 Upstash。
 - **本地开发**：`pnpm dev` = `tsx scripts/dev-node.ts`（@hono/node-server），启动时读 `.dev.vars` 注入 process.env（KEY=VALUE，剥引号），与 wrangler dev 行为等价；smoke 38 项在该模式下全绿。
 - **Vercel 出口 IP 同样是数据中心段**（AWS），B 站风控是否放行需部署后实测；被 ban 时配 `UPSTREAM_PROXY_BASE` 出口代理（README 有 nginx 配置示例），该机制平台无关。
+
+### 出口 IP 是 `-412 request was banned` 的决定性因素（2026-10-24 调研 + 实测）
+
+- **社区一手结论**：[ScaredCube《哔哩哔哩Api接口-412风控问题》](https://sccube.link/biliApi_securityControl) 实测「换了 cookies、UA、加了 Referer 都没用」，**换成香港 IP 后不再 412**（代价是游客只能拿 360P）；其后继项目把服务端放到 Vercel 边缘中转 api 请求即可正常工作。→ 说明能不能出数据主要看出口 IP 落在哪个机房/地区，而不是签名或指纹细节。
+- **官方文档的排查清单**（[bilibili-API-collect · v_voucher](https://github.com/SocialSisterYi/bilibili-API-collect)）：遇到 `-352/-412` 先查 WBI 签名 → 再查 `User-Agent` / `Referer` → 再查 Cookie 里 `bili_ticket` / `b_nut` / `buvid3` / `buvid4` 是否存在；仍不行才走 `v_voucher` + 验证码换 `gaia_vtoken`（需人工，不适合服务端）。本项目这三层都已实现（`src/lib/wbi.ts` / `request.ts` / `fingerprint.ts`，指纹 Cookie 含 `b_nut`），所以线上只剩「出口 IP」这一层变量。
+- **对本项目的操作含义**：① 先把 Vercel 函数钉到 `hkg1`（见上文「最终形态」——预设不认 regions，必须 `framework: null` + `api/index.ts`）；② 若香港机房仍被 ban，配 `UPSTREAM_PROXY_BASE` 指向家宽/国内 VPS 反代（README 有 nginx 示例），或直接按 Docker 自托管部署；③ 别在 header/cookie 上继续加戏——本地家宽跑 `pnpm smoke` 全绿、同一份代码在 Vercel iad1/hnd1 全线 `-412`，已经证明是 IP 层问题。
 
 ### 伪造 IP 头实验（借鉴 api-enhanced，实测对 B 站无效）
 
