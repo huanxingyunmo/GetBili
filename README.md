@@ -145,7 +145,7 @@ pnpm deploy                                     # = npx vercel --prod
 # 方式二：GitHub 集成 —— 在 vercel.com 导入仓库，环境变量在项目 Settings → Environment Variables 配置
 ```
 
-**函数区域已钉在 `hkg1`（香港）**：`vercel.json` 里 `"regions": ["hkg1"]`，`api/index.ts` 用 Node.js 运行时的 fetch 导出（不是 Edge Runtime）——原因很简单，Vercel 项目默认区域是 `iad1`（美国华盛顿特区），而**区域配置只对 Node.js 运行时的函数生效**；Edge 函数跑在全球 PoP、按请求就近执行，出口 IP 无从控制，对 B 站「出口信誉」型风控最不利。⚠️ 另有一个 Vercel 的坑：它的零配置 Hono 预设会把 `src/index.ts` / `app.ts` / `server.ts` 这类文件额外当成一个 `"/"` Node 函数（该函数调用 `app.fetch(req)` 不传 env，会让全站 500 `FUNCTION_INVOCATION_FAILED`），所以本项目的入口文件特意命名为 `src/worker.ts`，别改回 `index.ts`。想换成东京/新加坡等其它非美区，只改 `vercel.json` 的 region 代码即可（`hnd1`/`kix1` 日本、`sin1` 新加坡、`icn1` 首尔；Hobby 只允许单区域，Pro 最多 5 个）。环境变量（`ADMIN_TOKEN` / `BILI_COOKIE` / `KV_REST_API_*`）由 Vercel 注入 `process.env`，行为与 Workers 的绑定一致。
+**函数区域已钉在 `hkg1`（香港）**：`vercel.json` 里 `"regions": ["hkg1"]`，`api/index.ts` 用 Node.js 运行时的 fetch 导出（不是 Edge Runtime）——原因很简单，Vercel 项目默认区域是 `iad1`（美国华盛顿特区），而**区域配置只对 Node.js 运行时的函数生效**；Edge 函数跑在全球 PoP、按请求就近执行，出口 IP 无从控制，对 B 站「出口信誉」型风控最不利。⚠️ 另有一个 Vercel 的坑：它的零配置 Hono 预设会把 `src/index.ts` / `app.ts` / `server.ts` 这类文件额外当成一个 `"/"` Node 函数（该函数调用 `app.fetch(req)` 不传 env，会让全站 500 `FUNCTION_INVOCATION_FAILED`），所以本项目的入口文件特意命名为 `src/worker.ts`，别改回 `index.ts`；同时 `vercel.json` 里写了 `"framework": null` 把 Framework Preset 强制成 Other（不写的话 Vercel 会把项目当 Hono 项目构建，还可能报 `No entrypoint found`）。想换成东京/新加坡等其它非美区，只改 `vercel.json` 的 region 代码即可（`hnd1`/`kix1` 日本、`sin1` 新加坡、`icn1` 首尔；Hobby 只允许单区域，Pro 最多 5 个）。环境变量（`ADMIN_TOKEN` / `BILI_COOKIE` / `KV_REST_API_*`）由 Vercel 注入 `process.env`，行为与 Workers 的绑定一致。
 
 **必须配置的环境变量**（本地 `.dev.vars` 的等价物，线上在平台配置，勿写进仓库）：
 
