@@ -1,6 +1,6 @@
 # GetBili — 哔哩哔哩信息 API 服务
 
-基于 **Hono 4 + TypeScript** 的哔哩哔哩（Bilibili）信息聚合接口服务，主部署目标为 **Docker 自托管**（亦支持 Vercel Edge Functions 与 Cloudflare Workers）。通过统一的 HTTP 接口获取视频详情、DASH 播放直链、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹，全部接口返回统一 JSON 信封。
+基于 **Hono 4 + TypeScript** 的哔哩哔哩（Bilibili）信息聚合接口服务，主部署目标为 **Docker 自托管**（亦支持 Vercel Functions（Node.js 运行时，区域已钉 `hkg1` 香港）与 Cloudflare Workers）。通过统一的 HTTP 接口获取视频详情、DASH 播放直链、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹，全部接口返回统一 JSON 信封。
 
 > 本项目只做「信息读取 + 地址解析」，不代理、不转发、不缓存任何音视频与图片资源。播放地址直接返回 B 站 CDN 直链，由调用方自行访问。
 
@@ -144,6 +144,8 @@ pnpm deploy                                     # = npx vercel --prod
 
 # 方式二：GitHub 集成 —— 在 vercel.com 导入仓库，环境变量在项目 Settings → Environment Variables 配置
 ```
+
+**函数区域已钉在 `hkg1`（香港）**：`vercel.json` 里 `"regions": ["hkg1"]`，`api/index.ts` 用 Node.js 运行时的 fetch 导出（不是 Edge Runtime）——原因很简单，Vercel 项目默认区域是 `iad1`（美国华盛顿特区），而**区域配置只对 Node.js 运行时的函数生效**；Edge 函数跑在全球 PoP、按请求就近执行，出口 IP 无从控制，对 B 站「出口信誉」型风控最不利。想换成东京/新加坡等其它非美区，只改 `vercel.json` 的 region 代码即可（`hnd1`/`kix1` 日本、`sin1` 新加坡、`icn1` 首尔；Hobby 只允许单区域，Pro 最多 5 个）。环境变量（`ADMIN_TOKEN` / `BILI_COOKIE` / `KV_REST_API_*`）由 Vercel 注入 `process.env`，行为与 Workers 的绑定一致。
 
 **必须配置的环境变量**（本地 `.dev.vars` 的等价物，线上在平台配置，勿写进仓库）：
 

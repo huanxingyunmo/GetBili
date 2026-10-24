@@ -1,12 +1,12 @@
 # Project: GetBili
 
-哔哩哔哩（Bilibili）信息 API 服务：主部署目标为 **Docker 自托管**（跑自己的服务器，出口 IP 干净，绕开 B 站对 serverless 平台的 IP 风控），兼容 Vercel Edge Functions 与 Cloudflare Workers，通过 HTTP 接口获取视频详情、播放地址（DASH 直链）、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹。
+哔哩哔哩（Bilibili）信息 API 服务：主部署目标为 **Docker 自托管**（跑自己的服务器，出口 IP 干净，绕开 B 站对 serverless 平台的 IP 风控），兼容 Vercel Functions（Node.js 运行时，区域钉 `hkg1` 香港）与 Cloudflare Workers，通过 HTTP 接口获取视频详情、播放地址（DASH 直链）、分 P、弹幕、UP 主信息、投稿列表、搜索、合集与收藏夹。
 
 服务本身不代理视频流量，只返回结构化元数据与可直连的流地址。
 
 ## 技术栈
 
-- 语言/运行时：TypeScript 5/7；主运行时 **Docker 自托管（Node + @hono/node-server）**，兼容 Vercel Edge Functions 与 Cloudflare Workers（workerd）；全部业务代码只用 Web 标准 API（crypto.subtle / AbortSignal.timeout / fetch）
+- 语言/运行时：TypeScript 5/7；主运行时 **Docker 自托管（Node + @hono/node-server）**，兼容 Vercel Functions（Node.js 运行时）与 Cloudflare Workers（workerd）；全部业务代码只用 Web 标准 API（crypto.subtle / AbortSignal.timeout / fetch）
 - 框架/核心库：Hono 4（路由）、零运行时依赖（WBI 签名、设备指纹、protobuf 弹幕解析全部自实现）
 - 构建/包管理：pnpm 11；本地开发用 `tsx`（Node 直跑）+ `@hono/node-server`；部署 Vercel 用 `vercel` CLI / GitHub 集成，Cloudflare 用 wrangler 4
 - 测试：`node scripts/md5-check.mjs`（MD5 回归）+ `node scripts/smoke.mjs`（全接口真实上游冒烟）+ `scripts/ui-check.mjs`（内联页面离线检查）
@@ -43,7 +43,7 @@
 - `scripts/server.ts` —— 生产入口（Docker/自托管）：监听 0.0.0.0，PORT/HOST 可覆盖，esbuild 打包为自包含单文件
 - `Dockerfile` / `.dockerignore` / `docker-compose.yml` —— Docker 自托管三件套（两阶段构建，最终镜像仅 alpine + 单文件；敏感的 .dev.vars/.env 被 dockerignore 排除）
 - `docs/API.md` —— 完整接口文档
-- `vercel.json` —— Vercel rewrites 配置（serverless 备选）
+- `vercel.json` —— Vercel 配置：`regions: ["hkg1"]`（出口钉香港，见下文）+ rewrites（serverless 备选）
 - `wrangler.toml` —— Worker 配置与环境变量（备用）
 
 ## 工作流
@@ -183,10 +183,12 @@ B 站风控有**两类**「伪成功」响应，都会让调用方拿到看起�
 - **COOKIE_SECURE 坑**：Set-Cookie 原硬编码 `Secure`，裸 HTTP（`http://IP:8787`）浏览器拒存会话 Cookie → /adm 登录静默失败。已加 `COOKIE_SECURE` 环境变量（默认 true，显式 "false" 关闭；有 TLS 反代/边缘平台保持默认）。`clearSessionCookieValue(env?)` 同步适配（logout）。
 - **验证方式（本机无 Docker 时）**：`pnpm build:node` 后直接 `node dist/server.mjs`——与容器内运行同一份产物同一语义；实测 health/伪装/登录/COOKIE_SECURE 两态 + smoke 38/38 全绿。
 
-### 平台适配：Vercel Edge（2026-09-30 切换，现为 serverless 备选）
+### 平台适配：Vercel Functions Node.js 运行时（2026-10-24 由 Edge 切换，现为 serverless 备选）
 
-- **入口**：`api/index.ts`（`export const config = { runtime: 'edge' }`）+ `vercel.json` 的 rewrites `/(.*) → /api/index`。**rewrite 保留原始 URL**，Hono 拿到的是浏览器请求路径，直接路由 /、/ui、/adm、/api/*。
-- **c.env 的关键差异**：Workers 平台 env 来自绑定对象；Hono 的 `app.fetch(req, env)` 第二参即 c.env。Vercel 的 handle 不传 env，所以入口里显式 `app.fetch(req, process.env)`——**所有 c.env.XXX 在两平台行为一致**。
+- **为什么从 Edge 切到 Node 运行时**：`vercel.json` 的 `regions` **只对 Node.js 运行时的函数生效**，Edge 函数跑在全球 100+ PoP、按请求就近执行，执行位置与出口 IP 都不可控（旧 changelog 里「regional edge functions」已随 Edge Runtime 弃用）。本项目要的是出口 IP 稳定落在非美区机房（默认 region 是 `iad1` 华盛顿特区），所以必须用 Node 运行时才能钉区域。
+- **入口**：`api/index.ts`（`export default { fetch(req) { return app.fetch(req, process.env) } }`，Vercel 的 **fetch Web Standard 导出**，不再写 `export const config = { runtime: 'edge' }`——省掉即默认 Node 运行时）+ `vercel.json` 的 `regions: ["hkg1"]`（香港，Hobby 只允许单区域；Pro 最多 5 个）。**rewrite 保留原始 URL**，Hono 拿到的是浏览器请求路径，直接路由 /、/ui、/adm、/api/*。
+- **fetch 签名的返回类型**：Hono 的 `app.fetch` 返回 `Response | Promise<Response>`，入口声明必须写成 `Response | Promise<Response>`，写 `Promise<Response>` 会 TS2322。
+- **c.env 的关键差异**：Workers 平台 env 来自绑定对象；Hono 的 `app.fetch(req, env)` 第二参即 c.env。自写 fetch 导出时显式 `app.fetch(req, process.env)`（不要用 `hono/vercel` 的 `handle`，它不透传 env）——**所有 c.env.XXX 在两平台行为一致**。
 - **类型环境（2026-10-02 起）**：tsconfig `types: []` + `lib: [ES2022, DOM, DOM.Iterable]`——不再引用 @cloudflare/workers-types（Vercel 构建安装集不含它，TS2688），Web 标准 API 类型由 lib DOM 提供。KV 类型用 `src/types.ts` 导出的 `MinimalKV`（get/put 最小面）——**教训：Vercel 用 TS7 从 api/index.ts 沿 import 依赖图构建类型检查程序，无人 import 的全局 .d.ts 不在程序内（TS2304），类型必须随 import 链可达**。api/index.ts 里 `process` 用局部 declare；`scripts/*.ts`（dev-node/server）用了 node:fs，**故意不进 tsconfig include**（tsx/esbuild 只转译不查类型，运行无碍）。
 - **策略存储三后端抽象**（src/lib/policy.ts）：Upstash REST（`KV_REST_API_URL/KV_REST_API_TOKEN`，Vercel KV 即此协议）> Cloudflare KV（POLICY_KV，仅 Workers）> 实例内存兜底。内存兜底下策略在 serverless 多实例/冷启动会漂移——个人用可接受，生产配 Upstash。
 - **本地开发**：`pnpm dev` = `tsx scripts/dev-node.ts`（@hono/node-server），启动时读 `.dev.vars` 注入 process.env（KEY=VALUE，剥引号），与 wrangler dev 行为等价；smoke 38 项在该模式下全绿。
