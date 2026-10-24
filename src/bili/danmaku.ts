@@ -9,9 +9,9 @@
  *   3. B 站按「6 分钟一段」切分弹幕，段号从 1 开始递增；某段为空即表示已到末尾。
  */
 
-import type { DanmakuItem, Env } from '../types';
-import { biliRaw, buildUrl } from '../lib/request';
-import { toInt, videoUrl } from '../lib/parse';
+import type { DanmakuItem, Env } from '../types.js';
+import { biliRaw, buildUrl } from '../lib/request.js';
+import { toInt, videoUrl } from '../lib/parse.js';
 
 /** 弹幕分段接口（返回 protobuf） */
 const SEGMENT_URL = 'https://api.bilibili.com/x/v2/dm/web/seg.so';

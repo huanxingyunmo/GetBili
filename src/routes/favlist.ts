@@ -5,11 +5,11 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../types';
-import { badRequest } from '../lib/errors';
-import { ok, pathParam, qInt, type AppContext } from '../lib/http';
-import { parseFavlistId } from '../lib/parse';
-import { getFavlistVideos } from '../bili/collection';
+import type { Env } from '../types.js';
+import { badRequest } from '../lib/errors.js';
+import { ok, pathParam, qInt, type AppContext } from '../lib/http.js';
+import { parseFavlistId } from '../lib/parse.js';
+import { getFavlistVideos } from '../bili/collection.js';
 
 const favlist = new Hono<{ Bindings: Env }>();
 

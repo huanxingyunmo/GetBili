@@ -12,7 +12,7 @@
  * 代理端只需透传路径与请求头（Host/SNI 指向 api.bilibili.com），不理解任何业务。
  */
 
-import type { Env } from '../types';
+import type { Env } from '../types.js';
 
 export const API_BASE = 'https://api.bilibili.com';
 

@@ -21,10 +21,10 @@
  */
 
 import type { MiddlewareHandler } from 'hono';
-import type { Env } from '../types';
-import { jsonResponse } from './http';
-import { ENDPOINTS } from './endpoints';
-import { hasAdminAccess } from './auth';
+import type { Env } from '../types.js';
+import { jsonResponse } from './http.js';
+import { ENDPOINTS } from './endpoints.js';
+import { hasAdminAccess } from './auth.js';
 
 /** 接口可见性：public=默认公开；token=需要管理访问（会话或 Bearer 令牌） */
 export type ApiVisibility = 'public' | 'token';

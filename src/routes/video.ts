@@ -11,12 +11,12 @@
  */
 
 import { Hono } from 'hono';
-import type { Env, QualityOption, VideoDetail } from '../types';
-import { badRequest } from '../lib/errors';
-import { ok, pathParam, qBool, qInt, qStr, type AppContext } from '../lib/http';
-import { parseVideoId } from '../lib/parse';
-import { danmakuToXml, getDanmaku } from '../bili/danmaku';
-import { getCollectionByBvid } from '../bili/collection';
+import type { Env, QualityOption, VideoDetail } from '../types.js';
+import { badRequest } from '../lib/errors.js';
+import { ok, pathParam, qBool, qInt, qStr, type AppContext } from '../lib/http.js';
+import { parseVideoId } from '../lib/parse.js';
+import { danmakuToXml, getDanmaku } from '../bili/danmaku.js';
+import { getCollectionByBvid } from '../bili/collection.js';
 import {
   getAvailableQualities,
   getPlayUrl,
@@ -24,7 +24,7 @@ import {
   getVideoPages,
   resolveBvid,
   type VideoIdParam,
-} from '../bili/video';
+} from '../bili/video.js';
 
 const video = new Hono<{ Bindings: Env }>();
 

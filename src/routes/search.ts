@@ -7,10 +7,10 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../types';
-import { badRequest } from '../lib/errors';
-import { ok, qInt, qStr, type AppContext } from '../lib/http';
-import { searchUsers, searchVideos, type SearchOptions } from '../bili/search';
+import type { Env } from '../types.js';
+import { badRequest } from '../lib/errors.js';
+import { ok, qInt, qStr, type AppContext } from '../lib/http.js';
+import { searchUsers, searchVideos, type SearchOptions } from '../bili/search.js';
 
 const search = new Hono<{ Bindings: Env }>();
 

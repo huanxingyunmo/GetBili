@@ -9,8 +9,8 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../types';
-import { UI_HTML } from '../ui/page';
+import type { Env } from '../types.js';
+import { UI_HTML } from '../ui/page.js';
 
 /**
  * 页面响应头。

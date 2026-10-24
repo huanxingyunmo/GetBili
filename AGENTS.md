@@ -69,7 +69,7 @@ pnpm deploy:cf        # 部署到 Cloudflare Workers（备用）
   - 所有上游请求必须经 `src/lib/request.ts`，不要在业务模块里直接 `fetch`（会丢 Referer/UA 导致 -412 风控）
   - 错误统一抛 `BiliError`，HTTP 状态码只由 `biliCodeToStatus` 决定；不要在业务层硬编码状态码
   - 类型：禁用 `any`；上游响应定义内部 `RawXxx` interface 描述，再映射到 `src/types.ts` 的对外类型
-  - import 用无扩展名相对路径；纯类型用 `import type`
+  - **相对 import 必须带 `.js` 后缀**（`from './lib/http.js'`），纯类型用 `import type`。TS 侧 `moduleResolution: bundler` 天然接受、esbuild/tsx/wrangler 会把 `.js` 映射回 `.ts`，但 Vercel 是**逐文件转译**后按 Node ESM 解析，无扩展名会 `ERR_MODULE_NOT_FOUND`（见 Vercel 章节坑 1）
   - 中文注释，重点说明「为什么」而不只是「做什么」
 - Git 工作流：无固定分支约定；提交前跑 `pnpm run check`
 
@@ -187,7 +187,7 @@ B 站风控有**两类**「伪成功」响应，都会让调用方拿到看起�
 
 - **为什么从 Edge 切到 Node 运行时**：`vercel.json` 的 `regions` **只对 Node.js 运行时的函数生效**，Edge 函数跑在全球 100+ PoP、按请求就近执行，执行位置与出口 IP 都不可控（旧 changelog 里「regional edge functions」已随 Edge Runtime 弃用）。本项目要的是出口 IP 稳定落在非美区机房（默认 region 是 `iad1` 华盛顿特区），所以必须用 Node 运行时才能钉区域。
 - **最终形态（2026-10-24 定稿）：交给 Vercel 的 Hono 零配置预设，不再自建 `api/index.ts`**。`src/index.ts` 直接 `export default app`，Vercel 自动把它打成一个 Node 函数（构建产物里 `path: "/"`、`runtime: nodejs24.x`、`regions: ["hkg1"]`），路由全部由 Hono 处理，所以 `vercel.json` 里**不要 rewrites**（`api/` 目录也已删除）。
-- **坑 1：`@vercel/node` 是逐文件 tsc 转译、不打 bundle**。早期自建 `api/index.ts` 时，`import app from '../src/worker'`（无扩展名）会被原样 emit，Node ESM 运行时直接 `ERR_MODULE_NOT_FOUND` → 线上 `500 FUNCTION_INVOCATION_FAILED`。本地可精确复现：`tsc -p tsconfig.json --noEmit false --outDir .tsout` 后 `import('./.tsout/api/index.js')` 就报这个错；tsconfig 文档里「不支持 path mappings」正是「不做模块解析」的旁证。Hono 零配置预设的 builder 是真 esbuild 打包，这条路上没有该问题——**结论：入口不要写进 `api/`，让它走预设**。
+- **坑 1（2026-10-24 实测定位）：Vercel 逐文件 tsc 转译、不打 bundle**。日志实证：`Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/var/task/src/lib/http' imported from '/var/task/src/index.js'` —— `.ts` 被一个文件一个文件转成 `.js`（连 Hono 零配置预设也是这样），**import 说明符原样保留**，无扩展名的相对导入在 Node ESM 下必然解析失败 → 全站 `500 FUNCTION_INVOCATION_FAILED`。**修法：`src/` 里所有相对 import 都带 `.js` 后缀**（85 处，`from './lib/http.js'`）；TS 的 `moduleResolution: bundler` 接受，esbuild/tsx/wrangler 会把 `.js` 映射回 `.ts`，只有「逐文件转译 + 原生 ESM」这一路才需要它。本地验证法：`tsc -p tsconfig.json --noEmit false --outDir .tsout` 后 `import('./.tsout/src/index.js')`，改前 `ERR_MODULE_NOT_FOUND`、改后 200。
 - **坑 2：预设调 `app.fetch(req)` 不传第二个参数**，`c.env` 是空对象 → `Cannot read properties of undefined (reading 'CORS_ORIGIN')`，全站 500（连伪装页都出不来）。已修：`src/index.ts` 最外层第一个中间件把 `process.env` 合并进 `c.env`（`typeof process === 'undefined'` 守卫，Workers/workerd 完全不受影响，wrangler.toml 也没开 nodejs_compat）。业务代码继续只读 `c.env`，三平台语义一致。
 - **入口文件名必须留在白名单里**：`app|index|server.{js,cjs,mjs,ts,cts,mts}`（根目录或 `src/`）。改成 `src/worker.ts` 这类名字会直接 `[BUILD_FAILED] No entrypoint found` —— 所以入口就叫 `src/index.ts`，别改名。
 - **类型环境（2026-10-02 起）**：tsconfig `types: []` + `lib: [ES2022, DOM, DOM.Iterable]`——不再引用 @cloudflare/workers-types（Vercel 构建安装集不含它，TS2688），Web 标准 API 类型由 lib DOM 提供。KV 类型用 `src/types.ts` 导出的 `MinimalKV`（get/put 最小面）——**教训：Vercel 用 TS7 沿 import 依赖图构建类型检查程序，无人 import 的全局 .d.ts 不在程序内（TS2304），类型必须随 import 链可达**。`src/index.ts` 里 `process` 用局部 declare（Vercel 预设不传 env，用它兜底）；`scripts/*.ts`（dev-node/server）用了 node:fs，**故意不进 tsconfig include**（tsx/esbuild 只转译不查类型，运行无碍）。

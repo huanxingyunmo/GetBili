@@ -23,11 +23,11 @@ import type {
   VideoOwner,
   VideoPart,
   VideoStat,
-} from '../types';
-import { BiliError, badRequest, notFound, upstreamError } from '../lib/errors';
-import { audioQualityName, normalizeUrl, qualityName, toInt, videoUrl } from '../lib/parse';
-import { biliData, buildUrl, isAnonymous, tryLookEnabled, type QueryValue } from '../lib/request';
-import { wbiGet } from '../lib/wbi';
+} from '../types.js';
+import { BiliError, badRequest, notFound, upstreamError } from '../lib/errors.js';
+import { audioQualityName, normalizeUrl, qualityName, toInt, videoUrl } from '../lib/parse.js';
+import { biliData, buildUrl, isAnonymous, tryLookEnabled, type QueryValue } from '../lib/request.js';
+import { wbiGet } from '../lib/wbi.js';
 
 /** 视频标识：bvid 与 aid 至少提供一个 */
 export interface VideoIdParam {

@@ -6,10 +6,10 @@
  * 两者都无需 WBI 签名。
  */
 
-import type { CollectionInfo, Env, VideoBrief } from '../types';
-import { biliData, buildUrl } from '../lib/request';
-import { normalizeUrl, toInt, videoUrl } from '../lib/parse';
-import { badRequest, notFound } from '../lib/errors';
+import type { CollectionInfo, Env, VideoBrief } from '../types.js';
+import { biliData, buildUrl } from '../lib/request.js';
+import { normalizeUrl, toInt, videoUrl } from '../lib/parse.js';
+import { badRequest, notFound } from '../lib/errors.js';
 
 /**
  * 视频标识。注意：本文件刻意本地定义而不 import video.ts 的 VideoIdParam，

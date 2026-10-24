@@ -6,8 +6,8 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '../types';
-import { BiliError } from './errors';
+import type { Env } from '../types.js';
+import { BiliError } from './errors.js';
 
 export type AppContext = Context<{ Bindings: Env }>;
 

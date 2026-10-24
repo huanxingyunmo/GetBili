@@ -17,9 +17,9 @@
  * 形成循环依赖。因此 UA 由调用方以参数传入。
  */
 
-import type { Env } from '../types';
-import { md5Hex } from './md5';
-import { applyFakeCnIp, rewriteUpstreamUrl } from './upstream';
+import type { Env } from '../types.js';
+import { md5Hex } from './md5.js';
+import { applyFakeCnIp, rewriteUpstreamUrl } from './upstream.js';
 
 export interface Fingerprint {
   buvid3: string;

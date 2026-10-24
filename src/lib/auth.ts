@@ -15,8 +15,8 @@
  */
 
 import type { MiddlewareHandler } from 'hono';
-import type { Env } from '../types';
-import { jsonResponse } from './http';
+import type { Env } from '../types.js';
+import { jsonResponse } from './http.js';
 
 /** 管理会话 cookie 名 */
 export const SESSION_COOKIE = 'gb_adm';

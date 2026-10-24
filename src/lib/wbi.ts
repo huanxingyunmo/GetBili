@@ -10,17 +10,17 @@
  * 因此这里**不能**用 code==0 判断，否则未登录会拿不到密钥。
  */
 
-import type { Env } from '../types';
-import { md5Hex } from './md5';
-import { BiliError, biliCodeToStatus, upstreamError } from './errors';
-import { invalidateFingerprint } from './fingerprint';
+import type { Env } from '../types.js';
+import { md5Hex } from './md5.js';
+import { BiliError, biliCodeToStatus, upstreamError } from './errors.js';
+import { invalidateFingerprint } from './fingerprint.js';
 import {
   MAIN_REFERER,
   biliEnvelope,
   buildUrl,
   type FetchOptions,
   type QueryValue,
-} from './request';
+} from './request.js';
 
 /** B 站固定重排表 */
 export const MIXIN_KEY_ENC_TAB: readonly number[] = [

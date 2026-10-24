@@ -5,10 +5,10 @@
  * Referer / UA 的请求会返回 -412 风控）。
  */
 
-import type { BiliEnvelope, Env } from '../types';
-import { BiliError, biliCodeToStatus, upstreamError } from './errors';
-import { fingerprintToCookieString, getFingerprint } from './fingerprint';
-import { API_BASE, applyFakeCnIp, rewriteUpstreamUrl } from './upstream';
+import type { BiliEnvelope, Env } from '../types.js';
+import { BiliError, biliCodeToStatus, upstreamError } from './errors.js';
+import { fingerprintToCookieString, getFingerprint } from './fingerprint.js';
+import { API_BASE, applyFakeCnIp, rewriteUpstreamUrl } from './upstream.js';
 
 export const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';

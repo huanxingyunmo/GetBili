@@ -26,18 +26,18 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../types';
-import { admPage } from '../adm/page';
-import { jsonResponse, ok, type AppContext } from '../lib/http';
+import type { Env } from '../types.js';
+import { admPage } from '../adm/page.js';
+import { jsonResponse, ok, type AppContext } from '../lib/http.js';
 import {
   requireAdmin,
   tokenMatches,
   hasAdminAccess,
   createSessionCookieValue,
   clearSessionCookieValue,
-} from '../lib/auth';
-import { loadPolicy, savePolicy, matchEndpointTemplate } from '../lib/policy';
-import { ENDPOINTS } from '../lib/endpoints';
+} from '../lib/auth.js';
+import { loadPolicy, savePolicy, matchEndpointTemplate } from '../lib/policy.js';
+import { ENDPOINTS } from '../lib/endpoints.js';
 
 /**
  * B 站风格 JSON 404 —— 文案与 src/lib/auth.ts 里 requireAdmin / policyGuard 的

@@ -30,7 +30,7 @@
  * - 令牌输入框 type=password，登录成功后立即清空输入框，不回显。
  */
 
-import type { Env } from '../types';
+import type { Env } from '../types.js';
 
 export const ADM_HTML: string = `<!DOCTYPE html>
 <html lang="zh-CN">

@@ -14,7 +14,7 @@
 
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
-import type { Env } from './types';
+import type { Env } from './types.js';
 import {
   applyCorsHeaders,
   errorToResponse,
@@ -22,18 +22,18 @@ import {
   ok,
   resolveOrigin,
   type AppContext,
-} from './lib/http';
-import { getCookieString, tryLookEnabled } from './lib/request';
-import videoRoutes from './routes/video';
-import userRoutes from './routes/user';
-import searchRoutes from './routes/search';
-import favlistRoutes from './routes/favlist';
-import uiRoutes, { uiPage } from './routes/ui';
-import admRoutes from './routes/adm';
-import { cf404Page } from './disguise/page';
-import { hasAdminAccess } from './lib/auth';
-import { policyGuard } from './lib/policy';
-import { ENDPOINTS } from './lib/endpoints';
+} from './lib/http.js';
+import { getCookieString, tryLookEnabled } from './lib/request.js';
+import videoRoutes from './routes/video.js';
+import userRoutes from './routes/user.js';
+import searchRoutes from './routes/search.js';
+import favlistRoutes from './routes/favlist.js';
+import uiRoutes, { uiPage } from './routes/ui.js';
+import admRoutes from './routes/adm.js';
+import { cf404Page } from './disguise/page.js';
+import { hasAdminAccess } from './lib/auth.js';
+import { policyGuard } from './lib/policy.js';
+import { ENDPOINTS } from './lib/endpoints.js';
 
 const SERVICE = {
   name: 'GetBili API',

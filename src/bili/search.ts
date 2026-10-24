@@ -7,8 +7,8 @@
  * 都需要 WBI 签名；wbiGet 内部已做「签名失效 -> 刷新密钥重试」。
  */
 
-import type { Env, Paged, VideoBrief } from '../types';
-import { wbiGet } from '../lib/wbi';
+import type { Env, Paged, VideoBrief } from '../types.js';
+import { wbiGet } from '../lib/wbi.js';
 import {
   normalizeUrl,
   parseDurationText,
@@ -16,8 +16,8 @@ import {
   stripHtml,
   toInt,
   videoUrl,
-} from '../lib/parse';
-import { badRequest, biliCodeToStatus, BiliError } from '../lib/errors';
+} from '../lib/parse.js';
+import { badRequest, biliCodeToStatus, BiliError } from '../lib/errors.js';
 
 export interface SearchOptions {
   /** 页码，默认 1 */

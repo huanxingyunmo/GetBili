@@ -2,11 +2,11 @@
  * UP 主相关业务：UP 主信息（多源兜底）+ UP 主投稿列表（WBI 签名）。
  */
 
-import type { Env, Paged, UploaderInfo, VideoBrief } from '../types';
-import { biliData, buildUrl } from '../lib/request';
-import { wbiGet } from '../lib/wbi';
-import { normalizeUrl, parseDurationText, spaceUrl, toInt, videoUrl } from '../lib/parse';
-import { notFound } from '../lib/errors';
+import type { Env, Paged, UploaderInfo, VideoBrief } from '../types.js';
+import { biliData, buildUrl } from '../lib/request.js';
+import { wbiGet } from '../lib/wbi.js';
+import { normalizeUrl, parseDurationText, spaceUrl, toInt, videoUrl } from '../lib/parse.js';
+import { notFound } from '../lib/errors.js';
 
 /* ------------------------------------------------------------------ *
  * 上游原始结构（只声明用到的字段，全部可选以容忍上游缺字段 / 变更）

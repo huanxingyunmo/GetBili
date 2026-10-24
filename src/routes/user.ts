@@ -6,11 +6,11 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../types';
-import { badRequest } from '../lib/errors';
-import { ok, pathParam, qInt, qStr, type AppContext } from '../lib/http';
-import { parseMid } from '../lib/parse';
-import { getUploaderInfo, getUploaderVideos } from '../bili/user';
+import type { Env } from '../types.js';
+import { badRequest } from '../lib/errors.js';
+import { ok, pathParam, qInt, qStr, type AppContext } from '../lib/http.js';
+import { parseMid } from '../lib/parse.js';
+import { getUploaderInfo, getUploaderVideos } from '../bili/user.js';
 
 const user = new Hono<{ Bindings: Env }>();
 
