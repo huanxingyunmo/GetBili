@@ -8,13 +8,13 @@
  * - 打包方式：esbuild bundle 成自包含单文件（hono 与 @hono/node-server 全部内联），
  *   运行镜像不需要 node_modules —— 见 Dockerfile 两阶段构建。
  *
- * env 注入语义与 api/index.ts（Vercel）一致：app.fetch(req, process.env)，
+ * env 注入语义与 Vercel 侧一致：app.fetch(req, process.env)，
  * Hono 的 c.env 即第二参数，三平台行为对齐。
  */
 
 import { readFileSync } from 'node:fs';
 import { serve } from '@hono/node-server';
-import app from '../src/worker';
+import app from '../src/index';
 import type { Env } from '../src/types';
 
 // 与 dev-node.ts 相同的 .dev.vars 加载（KEY=VALUE 行，剥引号，不覆盖已有 env）；

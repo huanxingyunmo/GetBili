@@ -87,6 +87,26 @@ const uiGate: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
 const app = new Hono<{ Bindings: Env }>();
 
 /**
+ * 把 Node 进程的环境变量补进 c.env（必须是最外层第一个中间件）。
+ *
+ * 为什么需要：Vercel 的 Hono 零配置服务端只调 `app.fetch(req)`，不传第二个参数，
+ * 于是 c.env 是空对象，`c.env.ADMIN_TOKEN` / `KV_REST_API_*` 全部读到 undefined —
+ * 表现为管理后台登录失效、KV 策略退化成内存兜底。Node 下的真实来源是 process.env，
+ * 这里合并进去即可，业务代码继续只读 c.env（Workers 侧行为不变）。
+ *
+ * Workers/workerd 没有 process 这个全局，`typeof` 守卫保证这段在边缘运行时完全不执行，
+ * 也不会因为访问未定义标识符抛 ReferenceError。局部 declare 是为了不引入 @types/node。
+ */
+declare const process: { env: Record<string, string | undefined> } | undefined;
+
+app.use('*', async (c, next) => {
+  if (typeof process !== 'undefined' && process.env) {
+    c.env = { ...c.env, ...process.env } as unknown as Env;
+  }
+  await next();
+});
+
+/**
  * 最外层中间件：CORS + 统一错误处理。
  *
  * 这里没有用 hono/cors，而是自己处理 —— 因为中间件的「后置代码」在处理器抛错时

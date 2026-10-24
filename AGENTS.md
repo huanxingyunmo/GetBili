@@ -14,7 +14,7 @@
 
 ## 项目结构
 
-- `src/worker.ts` —— Worker 入口：CORS、访问控制挂载（policyGuard / uiGate）、伪装门槛、路由挂载、服务自描述
+- `src/index.ts` —— Worker 入口（Vercel 也用它，文件名不能改）：CORS、访问控制挂载（policyGuard / uiGate）、伪装门槛、路由挂载、服务自描述
 - `src/types.ts` —— **共享类型契约**，所有业务模块的接口签名以此为准；改动属破坏性变更
 - `src/lib/endpoints.ts` —— **接口契约清单（ENDPOINTS）的唯一权威来源**（策略键与自描述共用；index.ts 也从这里 import）
 - `src/lib/auth.ts` —— 管理后台认证：ADMIN_TOKEN 校验、HMAC 会话 Cookie（`gb_adm`）、Bearer 通道、`requireAdmin`
@@ -43,7 +43,7 @@
 - `scripts/server.ts` —— 生产入口（Docker/自托管）：监听 0.0.0.0，PORT/HOST 可覆盖，esbuild 打包为自包含单文件
 - `Dockerfile` / `.dockerignore` / `docker-compose.yml` —— Docker 自托管三件套（两阶段构建，最终镜像仅 alpine + 单文件；敏感的 .dev.vars/.env 被 dockerignore 排除）
 - `docs/API.md` —— 完整接口文档
-- `vercel.json` —— Vercel 配置：`framework: null`（强制 Other，关掉 Hono 零配置预设）+ `regions: ["hkg1"]`（出口钉香港）+ rewrites（serverless 备选）
+- `vercel.json` —— Vercel 配置：**只有** `regions: ["hkg1"]`（出口钉香港；不写 rewrites、不写 framework，原因见下文 Vercel 章节）
 - `wrangler.toml` —— Worker 配置与环境变量（备用）
 
 ## 工作流
@@ -186,11 +186,11 @@ B 站风控有**两类**「伪成功」响应，都会让调用方拿到看起�
 ### 平台适配：Vercel Functions Node.js 运行时（2026-10-24 由 Edge 切换，现为 serverless 备选）
 
 - **为什么从 Edge 切到 Node 运行时**：`vercel.json` 的 `regions` **只对 Node.js 运行时的函数生效**，Edge 函数跑在全球 100+ PoP、按请求就近执行，执行位置与出口 IP 都不可控（旧 changelog 里「regional edge functions」已随 Edge Runtime 弃用）。本项目要的是出口 IP 稳定落在非美区机房（默认 region 是 `iad1` 华盛顿特区），所以必须用 Node 运行时才能钉区域。
-- **⚠️ Vercel 会偷偷多建一个 "/" 函数（2026-10-24 踩坑，线上 500 的真凶）**：Vercel 的**零配置 Hono 预设**会扫描 `app.{ts,js}` / `index.{ts,js}` / `server.{ts,js}`（根目录或 `src/`）里 import 了 `hono` 的文件，把它当 Hono 服务器、额外生成一个 `path: "/"` 的 Node 函数。构建产物的 `serverlessFunctions.artefacts` 里因此出现**两个**函数：`"/"`（预设生成）与 `"/api/index"`（我们的入口）。预设调用的是 `app.fetch(req)` **不传 env**，于是 `c.env` 为 `undefined`，一进中间件就 `Cannot read properties of undefined (reading 'CORS_ORIGIN')` → 全站 `500 FUNCTION_INVOCATION_FAILED`（连伪装页都出不来），而 `/api/index` 那条路其实是好的。**对策：入口文件不能叫 `index.ts` / `app.ts` / `server.ts`（已改名 `src/worker.ts`）**；万一 Dashboard 的 Framework Preset 被记成 Hono，手动改成 Other。本地一秒验证该成因：`app.fetch(req)` 不传 env 全部 500，`app.fetch(req, process.env)` 全部正常。**但只改名还不够**：项目的 Framework Preset 已被探成 Hono，改名后构建直接 `[BUILD_FAILED] No entrypoint found`（它只认 `app|index|server.{ts,js}` 那六个位置），所以两个动作必须一起做——入口改名 + `vercel.json` 写 `"framework": null`。官方文档明确「要选 Other 作为 Framework Preset，就用 `null`」；写了 null 之后 api/ 目录下的函数 + rewrites 才是唯一的构建路径，Hono 零配置扫描彻底关闭。
-- **入口**：`api/index.ts`（`export default { fetch(req) { return app.fetch(req, process.env) } }`，Vercel 的 **fetch Web Standard 导出**，不再写 `export const config = { runtime: 'edge' }`——省掉即默认 Node 运行时）+ `vercel.json` 的 `regions: ["hkg1"]`（香港，Hobby 只允许单区域；Pro 最多 5 个）。**rewrite 保留原始 URL**，Hono 拿到的是浏览器请求路径，直接路由 /、/ui、/adm、/api/*。
-- **fetch 签名的返回类型**：Hono 的 `app.fetch` 返回 `Response | Promise<Response>`，入口声明必须写成 `Response | Promise<Response>`，写 `Promise<Response>` 会 TS2322。
-- **c.env 的关键差异**：Workers 平台 env 来自绑定对象；Hono 的 `app.fetch(req, env)` 第二参即 c.env。自写 fetch 导出时显式 `app.fetch(req, process.env)`（不要用 `hono/vercel` 的 `handle`，它不透传 env）——**所有 c.env.XXX 在两平台行为一致**。
-- **类型环境（2026-10-02 起）**：tsconfig `types: []` + `lib: [ES2022, DOM, DOM.Iterable]`——不再引用 @cloudflare/workers-types（Vercel 构建安装集不含它，TS2688），Web 标准 API 类型由 lib DOM 提供。KV 类型用 `src/types.ts` 导出的 `MinimalKV`（get/put 最小面）——**教训：Vercel 用 TS7 从 api/index.ts 沿 import 依赖图构建类型检查程序，无人 import 的全局 .d.ts 不在程序内（TS2304），类型必须随 import 链可达**。api/index.ts 里 `process` 用局部 declare；`scripts/*.ts`（dev-node/server）用了 node:fs，**故意不进 tsconfig include**（tsx/esbuild 只转译不查类型，运行无碍）。
+- **最终形态（2026-10-24 定稿）：交给 Vercel 的 Hono 零配置预设，不再自建 `api/index.ts`**。`src/index.ts` 直接 `export default app`，Vercel 自动把它打成一个 Node 函数（构建产物里 `path: "/"`、`runtime: nodejs24.x`、`regions: ["hkg1"]`），路由全部由 Hono 处理，所以 `vercel.json` 里**不要 rewrites**（`api/` 目录也已删除）。
+- **坑 1：`@vercel/node` 是逐文件 tsc 转译、不打 bundle**。早期自建 `api/index.ts` 时，`import app from '../src/worker'`（无扩展名）会被原样 emit，Node ESM 运行时直接 `ERR_MODULE_NOT_FOUND` → 线上 `500 FUNCTION_INVOCATION_FAILED`。本地可精确复现：`tsc -p tsconfig.json --noEmit false --outDir .tsout` 后 `import('./.tsout/api/index.js')` 就报这个错；tsconfig 文档里「不支持 path mappings」正是「不做模块解析」的旁证。Hono 零配置预设的 builder 是真 esbuild 打包，这条路上没有该问题——**结论：入口不要写进 `api/`，让它走预设**。
+- **坑 2：预设调 `app.fetch(req)` 不传第二个参数**，`c.env` 是空对象 → `Cannot read properties of undefined (reading 'CORS_ORIGIN')`，全站 500（连伪装页都出不来）。已修：`src/index.ts` 最外层第一个中间件把 `process.env` 合并进 `c.env`（`typeof process === 'undefined'` 守卫，Workers/workerd 完全不受影响，wrangler.toml 也没开 nodejs_compat）。业务代码继续只读 `c.env`，三平台语义一致。
+- **入口文件名必须留在白名单里**：`app|index|server.{js,cjs,mjs,ts,cts,mts}`（根目录或 `src/`）。改成 `src/worker.ts` 这类名字会直接 `[BUILD_FAILED] No entrypoint found` —— 所以入口就叫 `src/index.ts`，别改名。
+- **类型环境（2026-10-02 起）**：tsconfig `types: []` + `lib: [ES2022, DOM, DOM.Iterable]`——不再引用 @cloudflare/workers-types（Vercel 构建安装集不含它，TS2688），Web 标准 API 类型由 lib DOM 提供。KV 类型用 `src/types.ts` 导出的 `MinimalKV`（get/put 最小面）——**教训：Vercel 用 TS7 沿 import 依赖图构建类型检查程序，无人 import 的全局 .d.ts 不在程序内（TS2304），类型必须随 import 链可达**。`src/index.ts` 里 `process` 用局部 declare（Vercel 预设不传 env，用它兜底）；`scripts/*.ts`（dev-node/server）用了 node:fs，**故意不进 tsconfig include**（tsx/esbuild 只转译不查类型，运行无碍）。
 - **策略存储三后端抽象**（src/lib/policy.ts）：Upstash REST（`KV_REST_API_URL/KV_REST_API_TOKEN`，Vercel KV 即此协议）> Cloudflare KV（POLICY_KV，仅 Workers）> 实例内存兜底。内存兜底下策略在 serverless 多实例/冷启动会漂移——个人用可接受，生产配 Upstash。
 - **本地开发**：`pnpm dev` = `tsx scripts/dev-node.ts`（@hono/node-server），启动时读 `.dev.vars` 注入 process.env（KEY=VALUE，剥引号），与 wrangler dev 行为等价；smoke 38 项在该模式下全绿。
 - **Vercel 出口 IP 同样是数据中心段**（AWS），B 站风控是否放行需部署后实测；被 ban 时配 `UPSTREAM_PROXY_BASE` 出口代理（README 有 nginx 配置示例），该机制平台无关。

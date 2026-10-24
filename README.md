@@ -45,7 +45,7 @@
 ```text
 GetBili/
 ├── src/
-│   ├── worker.ts             # Worker 入口：CORS、访问控制挂载、伪装门槛、路由挂载、服务自描述
+│   ├── index.ts              # Worker 入口（Vercel 也用它，文件名不能改）：CORS、访问控制挂载、伪装门槛、路由挂载、服务自描述
 │   ├── types.ts              # 全局类型契约（Env 与所有接口返回结构）
 │   ├── bili/                 # 业务模块（直接对接 B 站上游并做字段映射）
 │   │   ├── video.ts          # 视频详情 / 分P / 播放地址 / 可用清晰度
@@ -145,7 +145,7 @@ pnpm deploy                                     # = npx vercel --prod
 # 方式二：GitHub 集成 —— 在 vercel.com 导入仓库，环境变量在项目 Settings → Environment Variables 配置
 ```
 
-**函数区域已钉在 `hkg1`（香港）**：`vercel.json` 里 `"regions": ["hkg1"]`，`api/index.ts` 用 Node.js 运行时的 fetch 导出（不是 Edge Runtime）——原因很简单，Vercel 项目默认区域是 `iad1`（美国华盛顿特区），而**区域配置只对 Node.js 运行时的函数生效**；Edge 函数跑在全球 PoP、按请求就近执行，出口 IP 无从控制，对 B 站「出口信誉」型风控最不利。⚠️ 另有一个 Vercel 的坑：它的零配置 Hono 预设会把 `src/index.ts` / `app.ts` / `server.ts` 这类文件额外当成一个 `"/"` Node 函数（该函数调用 `app.fetch(req)` 不传 env，会让全站 500 `FUNCTION_INVOCATION_FAILED`），所以本项目的入口文件特意命名为 `src/worker.ts`，别改回 `index.ts`；同时 `vercel.json` 里写了 `"framework": null` 把 Framework Preset 强制成 Other（不写的话 Vercel 会把项目当 Hono 项目构建，还可能报 `No entrypoint found`）。想换成东京/新加坡等其它非美区，只改 `vercel.json` 的 region 代码即可（`hnd1`/`kix1` 日本、`sin1` 新加坡、`icn1` 首尔；Hobby 只允许单区域，Pro 最多 5 个）。环境变量（`ADMIN_TOKEN` / `BILI_COOKIE` / `KV_REST_API_*`）由 Vercel 注入 `process.env`，行为与 Workers 的绑定一致。
+**函数区域已钉在 `hkg1`（香港）**：`vercel.json` 只有一行 `"regions": ["hkg1"]` —— Vercel 项目默认区域是 `iad1`（美国华盛顿特区），而**区域配置只对 Node.js 运行时的函数生效**；Edge 函数跑在全球 PoP、按请求就近执行，出口 IP 无从控制，对 B 站「出口信誉」型风控最不利。Vercel 侧完全交给它的**零配置 Hono 预设**：`src/index.ts` 直接 `export default app`，Vercel 自动打成一个 Node 函数，路由全由 Hono 处理——所以**不要**再自建 `api/index.ts`，也不要加 rewrites（`@vercel/node` 是逐文件 tsc 转译、不打 bundle，无扩展名相对导入会在运行时 `ERR_MODULE_NOT_FOUND`，表现为全站 500），也别把入口文件改名成 `worker.ts` 之类（预设只认 `app|index|server` 白名单，否则 `[BUILD_FAILED] No entrypoint found`）。想换东京/新加坡等其它非美区，只改 region 代码即可（`hnd1`/`kix1` 日本、`sin1` 新加坡、`icn1` 首尔；Hobby 只允许单区域，Pro 最多 5 个）。环境变量（`ADMIN_TOKEN` / `BILI_COOKIE` / `KV_REST_API_*`）来自 `process.env`：预设调 `app.fetch(req)` 不传 env，入口里已用最外层中间件把 `process.env` 合并进 `c.env`，业务代码照旧只读 `c.env`。
 
 **必须配置的环境变量**（本地 `.dev.vars` 的等价物，线上在平台配置，勿写进仓库）：
 
