@@ -22,7 +22,7 @@
  * - 登录失败统一延迟 300ms 再响应，抬高在线爆破的单次成本；成功路径不延迟，
  *   保持正常体验。
  *
- * 所有 handler 抛出的异常由 src/index.ts 最外层中间件统一转 JSON，无需逐个 try/catch。
+ * 所有 handler 抛出的异常由 src/worker.ts 最外层中间件统一转 JSON，无需逐个 try/catch。
  */
 
 import { Hono } from 'hono';

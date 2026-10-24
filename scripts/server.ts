@@ -14,7 +14,7 @@
 
 import { readFileSync } from 'node:fs';
 import { serve } from '@hono/node-server';
-import app from '../src/index';
+import app from '../src/worker';
 import type { Env } from '../src/types';
 
 // 与 dev-node.ts 相同的 .dev.vars 加载（KEY=VALUE 行，剥引号，不覆盖已有 env）；

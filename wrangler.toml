@@ -1,5 +1,5 @@
 name = "getbili"
-main = "src/index.ts"
+main = "src/worker.ts"
 compatibility_date = "2026-09-01"
 
 # ⚠️ 当前主部署方式为 Docker 自托管（见 Dockerfile / docker-compose.yml），本文件仅用于

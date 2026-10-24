@@ -1,7 +1,7 @@
 /**
  * 对外 API 契约清单 —— 全部 JSON 接口的 method/path/desc/query 定义。
  *
- * 原先内联在 src/index.ts，拆出来是因为它同时是多个模块的数据源：
+ * 原先内联在 src/worker.ts，拆出来是因为它同时是多个模块的数据源：
  * - 首页与 /api 的服务自描述（index.ts 从这里 import）；
  * - 接口公开策略系统（src/lib/policy.ts）：策略 KV 的键以这里的 path 模板为准，
  *   请求路径按模板（如 /api/video/:id）归一后再查策略；

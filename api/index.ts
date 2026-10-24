@@ -18,7 +18,7 @@
  * c.env 行为对齐（Hono 的 c.env 即 app.fetch 的第二参数）。
  */
 
-import app from '../src/index';
+import app from '../src/worker';
 import type { Env } from '../src/types';
 
 // Node 运行时会注入真实的 process.env。项目类型环境是 lib DOM（无 Node 全局声明），

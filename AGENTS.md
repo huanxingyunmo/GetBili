@@ -14,7 +14,7 @@
 
 ## 项目结构
 
-- `src/index.ts` —— Worker 入口：CORS、访问控制挂载（policyGuard / uiGate）、伪装门槛、路由挂载、服务自描述
+- `src/worker.ts` —— Worker 入口：CORS、访问控制挂载（policyGuard / uiGate）、伪装门槛、路由挂载、服务自描述
 - `src/types.ts` —— **共享类型契约**，所有业务模块的接口签名以此为准；改动属破坏性变更
 - `src/lib/endpoints.ts` —— **接口契约清单（ENDPOINTS）的唯一权威来源**（策略键与自描述共用；index.ts 也从这里 import）
 - `src/lib/auth.ts` —— 管理后台认证：ADMIN_TOKEN 校验、HMAC 会话 Cookie（`gb_adm`）、Bearer 通道、`requireAdmin`
@@ -186,6 +186,7 @@ B 站风控有**两类**「伪成功」响应，都会让调用方拿到看起�
 ### 平台适配：Vercel Functions Node.js 运行时（2026-10-24 由 Edge 切换，现为 serverless 备选）
 
 - **为什么从 Edge 切到 Node 运行时**：`vercel.json` 的 `regions` **只对 Node.js 运行时的函数生效**，Edge 函数跑在全球 100+ PoP、按请求就近执行，执行位置与出口 IP 都不可控（旧 changelog 里「regional edge functions」已随 Edge Runtime 弃用）。本项目要的是出口 IP 稳定落在非美区机房（默认 region 是 `iad1` 华盛顿特区），所以必须用 Node 运行时才能钉区域。
+- **⚠️ Vercel 会偷偷多建一个 "/" 函数（2026-10-24 踩坑，线上 500 的真凶）**：Vercel 的**零配置 Hono 预设**会扫描 `app.{ts,js}` / `index.{ts,js}` / `server.{ts,js}`（根目录或 `src/`）里 import 了 `hono` 的文件，把它当 Hono 服务器、额外生成一个 `path: "/"` 的 Node 函数。构建产物的 `serverlessFunctions.artefacts` 里因此出现**两个**函数：`"/"`（预设生成）与 `"/api/index"`（我们的入口）。预设调用的是 `app.fetch(req)` **不传 env**，于是 `c.env` 为 `undefined`，一进中间件就 `Cannot read properties of undefined (reading 'CORS_ORIGIN')` → 全站 `500 FUNCTION_INVOCATION_FAILED`（连伪装页都出不来），而 `/api/index` 那条路其实是好的。**对策：入口文件不能叫 `index.ts` / `app.ts` / `server.ts`（已改名 `src/worker.ts`）**；万一 Dashboard 的 Framework Preset 被记成 Hono，手动改成 Other。本地一秒验证该成因：`app.fetch(req)` 不传 env 全部 500，`app.fetch(req, process.env)` 全部正常。
 - **入口**：`api/index.ts`（`export default { fetch(req) { return app.fetch(req, process.env) } }`，Vercel 的 **fetch Web Standard 导出**，不再写 `export const config = { runtime: 'edge' }`——省掉即默认 Node 运行时）+ `vercel.json` 的 `regions: ["hkg1"]`（香港，Hobby 只允许单区域；Pro 最多 5 个）。**rewrite 保留原始 URL**，Hono 拿到的是浏览器请求路径，直接路由 /、/ui、/adm、/api/*。
 - **fetch 签名的返回类型**：Hono 的 `app.fetch` 返回 `Response | Promise<Response>`，入口声明必须写成 `Response | Promise<Response>`，写 `Promise<Response>` 会 TS2322。
 - **c.env 的关键差异**：Workers 平台 env 来自绑定对象；Hono 的 `app.fetch(req, env)` 第二参即 c.env。自写 fetch 导出时显式 `app.fetch(req, process.env)`（不要用 `hono/vercel` 的 `handle`，它不透传 env）——**所有 c.env.XXX 在两平台行为一致**。

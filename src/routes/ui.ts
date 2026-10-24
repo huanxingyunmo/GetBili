@@ -2,7 +2,7 @@
  * 控制台页面路由 —— 挂载在 /ui
  *
  *   GET /ui    浏览器控制台（HTML）
- *   GET /ui/   同上，尾斜杠路由由 src/index.ts 单独注册（见文件末尾说明）
+ *   GET /ui/   同上，尾斜杠路由由 src/worker.ts 单独注册（见文件末尾说明）
  *
  * 这个路由只负责「把页面以正确的头和策略吐出去」，页面内容本身在 src/ui/page.ts。
  * 页面与接口同源，因此不存在跨域问题；不要在页面里请求别的域名。
@@ -51,7 +51,7 @@ const ui = new Hono<{ Bindings: Env }>();
 ui.get('/', uiPage);
 
 /**
- * 尾斜杠路由由 src/index.ts 直接注册。
+ * 尾斜杠路由由 src/worker.ts 直接注册。
  *
  * Hono 的路由默认是 strict 的：`app.route('/ui', sub)` 里的 `sub.get('/')` 只会
  * 注册出 `/ui` 这一条路径，`/ui/` 会落到 notFound。这里不能用 `ui.get('')` 之类的

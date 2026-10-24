@@ -14,7 +14,7 @@
 
 import { readFileSync } from 'node:fs';
 import { serve } from '@hono/node-server';
-import app from '../src/index';
+import app from '../src/worker';
 import type { Env } from '../src/types';
 
 // 加载 .dev.vars（KEY=VALUE 行，剥引号；与 wrangler dev 的本地变量文件同格式）
