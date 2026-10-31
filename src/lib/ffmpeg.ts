@@ -16,7 +16,7 @@ async function nodeModule(spec: string): Promise<any> {
 
 /** ffmpeg 是否可用（可用 resolve，否则 reject） */
 export async function ffmpegAvailable(): Promise<string> {
-  const { spawn } = await nodeModule('node:child_process');
+  const { spawn } = await nodeModule('child_process');
   return new Promise<string>((resolve, reject) => {
     const child = spawn('ffmpeg', ['-version']);
     child.on('error', () => reject(new Error('ffmpeg 不可用')));
@@ -36,10 +36,10 @@ export async function mergeDashToMp4(
   referer: string,
 ): Promise<Uint8Array> {
   const [{ spawn }, fsP, osP, pathP] = await Promise.all([
-    nodeModule('node:child_process'),
-    nodeModule('node:fs/promises'),
-    nodeModule('node:os'),
-    nodeModule('node:path'),
+    nodeModule('child_process'),
+    nodeModule('fs/promises'),
+    nodeModule('os'),
+    nodeModule('path'),
   ]);
 
   const dir: string = await fsP.mkdtemp(osP.tmpdir() + pathP.sep + 'getbili-merge-');
