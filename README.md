@@ -257,6 +257,7 @@ ADMIN_TOKEN=dev-admin-token
 | GET | `/api/video` | 视频详情（查询串入参） | `url` / `bvid` / `aid` |
 | GET | `/api/video/:id/pages` | 分 P 列表 | — |
 | GET | `/api/video/:id/playurl` | 播放地址（DASH / durl） | `qn`（默认 80）、`cid` |
+| GET | `/api/video/:id/file` | **直接可用的视频/音频文件地址**（durl 合流或 DASH 最佳单流，供 `<video src>` / 下载） | `qn`（默认 80）、`audio=1` 音频流、`cid` |
 | GET | `/api/video/:id/qualities` | 可用清晰度列表 | `cid` |
 | GET | `/api/video/:id/danmaku` | 弹幕（JSON / XML） | `format`、`segment`、`maxSegments` |
 | GET | `/api/video/:id/collection` | 所属合集 | — |
