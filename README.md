@@ -258,6 +258,7 @@ ADMIN_TOKEN=dev-admin-token
 | GET | `/api/video/:id/pages` | 分 P 列表 | — |
 | GET | `/api/video/:id/playurl` | 播放地址（DASH / durl） | `qn`（默认 80）、`cid` |
 | GET | `/api/video/:id/file` | **直接返回视频/音频文件本体**（流式代理，可 `<video src>` 直接引用；`download=1` 触发浏览器下载） | `qn`（默认 80）、`audio=1` 音频流、`download=1`、`cid` |
+| GET | `/api/video/:id/merge` | **音视频合并后的完整 mp4**（DASH 两路服务端 remux，`-c copy` 不重编码；需 ffmpeg，Docker 镜像已内置） | `qn`（默认 80）、`download=1`、`cid` |
 | GET | `/api/video/:id/qualities` | 可用清晰度列表 | `cid` |
 | GET | `/api/video/:id/danmaku` | 弹幕（JSON / XML） | `format`、`segment`、`maxSegments` |
 | GET | `/api/video/:id/collection` | 所属合集 | — |

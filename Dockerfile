@@ -28,8 +28,9 @@ RUN node node_modules/esbuild/bin/esbuild scripts/server.ts \
       --bundle --format=esm --platform=node --target=node20 \
       --outfile=dist/server.mjs
 
-# ---------- 运行阶段：极小镜像 ----------
+# ---------- 运行阶段：极小镜像（含 ffmpeg 供 /merge remux）----------
 FROM node:22-alpine
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 ENV NODE_ENV=production PORT=8787
 COPY --from=build /app/dist/server.mjs ./server.mjs

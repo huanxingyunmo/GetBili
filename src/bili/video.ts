@@ -705,3 +705,14 @@ async function resolveCidAndBvidLocal(env: Env, id: VideoIdParam): Promise<{ cid
   const detail = await getVideoDetail(env, id);
   return { cid: detail.cid, bvid };
 }
+
+/* ------------------------------------------------------------------ *
+ * 直接返回合并后的视频文件（2026-10-31）
+ *
+ * DASH 格式下 B 站的音视频是分离的两路流（这就是为什么播放器要 MSE）。
+ * 此方法服务端把两路都拉下来，用 ffmpeg -c copy remux 成一个 mp4
+ * （不重编码，秒级），再以文件本体流式返回。
+ *
+ * 依赖运行环境有 ffmpeg（Dockerfile 已 apk add；本地开发需自行安装）。
+ * @returns { ffmpegPath 或 null } 供路由层决定是否可用
+ */

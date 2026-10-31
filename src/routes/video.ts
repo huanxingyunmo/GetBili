@@ -5,6 +5,7 @@
  *   GET /:id/pages        分 P 列表
  *   GET /:id/playurl      播放地址（DASH 音视频流 / durl）
  *   GET /:id/file         直接返回视频/音频文件本体（流式代理；qn= 清晰度，audio=1 音频流，download=1 下载）
+ *   GET /:id/merge        音视频合并成完整 mp4（需 ffmpeg；qn= 清晰度，download=1 下载）
  *   GET /:id/qualities    可用清晰度
  *   GET /:id/danmaku      弹幕（JSON / XML）
  *   GET /:id/collection   所属合集
@@ -27,6 +28,7 @@ import {
   resolveBvid,
   type VideoIdParam,
 } from '../bili/video.js';
+import { ffmpegAvailable, mergeDashToMp4 } from '../lib/ffmpeg.js';
 
 const video = new Hono<{ Bindings: Env }>();
 
@@ -170,6 +172,49 @@ video.get('/:id/file', async (c) => {
   return new Response(upstream.body, { status, headers: out });
 });
 
+/**
+ * 直接返回「音视频合并后」的完整 mp4 文件本体（DASH 两路 remux，-c copy 秒级）。
+ *
+ * 为什么需要：B 站 DASH 的音视频是分离的（`/:id/file` 在 DASH 下只给视频流，
+ * 播放器要靠 MSE 才能同时拿到声音）。本端点由服务端把两路都拉下来 remux。
+ *
+ * 查询参数：qn= 清晰度（默认 80）；download=1 触发浏览器下载；cid= 指定分 P。
+ * 依赖运行环境有 ffmpeg（Docker 镜像已内置）；没有时返回 501 + 说明。
+ */
+video.get('/:id/merge', async (c) => {
+  const id = readId(c, pathParam(c, 'id'));
+  const qn = qInt(c, 'qn', 80, { min: 1 });
+  const download = qBool(c, 'download', false);
+
+  try {
+    await ffmpegAvailable();
+  } catch {
+    throw badRequest('服务端未安装 ffmpeg，无法合并音视频；请改用 /:id/file（仅视频流）');
+  }
+
+  const meta = await getVideoFile(c.env, id, { qn, audio: false });
+  const bvid = meta.bvid;
+  const referer = `https://www.bilibili.com/video/${bvid}/`;
+
+  // 音频用 getPlayUrl 拿 best.audio
+  const cid = meta.cid;
+  const play = await getPlayUrl(c.env, id, cid, meta.quality ?? qn);
+  const audio = play.best.audio ?? play.dash?.audio?.[0];
+  if (!audio) throw badRequest('该视频没有可用的音频流，无法合并');
+
+  const merged = await mergeDashToMp4(meta.url, audio.baseUrl, referer);
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'video/mp4',
+    'Cache-Control': 'no-store',
+    'Accept-Ranges': 'none',
+  };
+  if (download) {
+    const name = `${bvid}_${meta.qualityName}.mp4`.replace(/[^\w.\-]/g, '_');
+    headers['Content-Disposition'] = `attachment; filename="${name}"`;
+  }
+  return new Response(merged as unknown as BodyInit, { status: 200, headers });
+});
 video.get('/:id/qualities', async (c) => {
   const id = readId(c, pathParam(c, 'id'));
   const { cid } = await resolveCidAndBvid(c, id);
