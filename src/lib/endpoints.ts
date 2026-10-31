@@ -24,7 +24,7 @@ export const ENDPOINTS: EndpointDef[] = [
   { method: 'GET', path: '/api/video/:id', desc: '视频详情（支持 BV 号 / av 号 / 视频链接）', query: 'qualities=1 附带可用清晰度探测；pages=0 省略分P' },
   { method: 'GET', path: '/api/video/:id/pages', desc: '分 P 列表', query: '' },
   { method: 'GET', path: '/api/video/:id/playurl', desc: '播放地址（DASH 音视频流 / durl）', query: 'qn=80 清晰度；cid= 指定分P' },
-  { method: 'GET', path: '/api/video/:id/file', desc: '直接可用的视频/音频文件地址（合流或最佳单流）', query: 'qn=80 清晰度；audio=1 返回音频流；cid= 指定分P' },
+  { method: 'GET', path: '/api/video/:id/file', desc: '直接返回视频/音频文件本体（流式代理，download=1 触发下载）', query: 'qn=80 清晰度；audio=1 音频流；download=1 下载；cid= 指定分P' },
   { method: 'GET', path: '/api/video/:id/qualities', desc: '可用清晰度列表', query: 'cid= 指定分P' },
   { method: 'GET', path: '/api/video/:id/danmaku', desc: '弹幕，format=json 返回数组，format=xml 返回标准 XML', query: 'format=json|xml；segment= 指定分段；maxSegments= 最大分段数' },
   { method: 'GET', path: '/api/video/:id/collection', desc: '该视频所属合集及全部视频', query: '' },

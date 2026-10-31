@@ -4,7 +4,7 @@
  *   GET /:id              视频详情
  *   GET /:id/pages        分 P 列表
  *   GET /:id/playurl      播放地址（DASH 音视频流 / durl）
- *   GET /:id/file         直接可用的视频/音频文件地址（qn= 清晰度；audio=1 音频流）
+ *   GET /:id/file         直接返回视频/音频文件本体（流式代理；qn= 清晰度，audio=1 音频流，download=1 下载）
  *   GET /:id/qualities    可用清晰度
  *   GET /:id/danmaku      弹幕（JSON / XML）
  *   GET /:id/collection   所属合集
@@ -13,7 +13,7 @@
 
 import { Hono } from 'hono';
 import type { Env, QualityOption, VideoDetail } from '../types.js';
-import { badRequest } from '../lib/errors.js';
+import { badRequest, upstreamError } from '../lib/errors.js';
 import { ok, pathParam, qBool, qInt, qStr, type AppContext } from '../lib/http.js';
 import { parseVideoId } from '../lib/parse.js';
 import { danmakuToXml, getDanmaku } from '../bili/danmaku.js';
@@ -103,12 +103,67 @@ video.get('/:id/playurl', async (c) => {
   return ok(c, result);
 });
 
+/**
+ * 直接返回视频/音频文件本体（流式代理），不是链接。
+ *
+ * GET /:id/file?download=1 时附带 Content-Disposition，
+ * 浏览器访问即下载；默认（无 download）可被 <video src> / <audio src> 直接引用。
+ *
+ * 注意：本端点把 B 站的 Referer 防盗链"翻译"掉了 —— 服务端带 Referer 回源，
+ * 调用方无需任何请求头。代价是流量过本服务，直链时效（约 1~2 小时）不再暴露给调用方。
+ */
 video.get('/:id/file', async (c) => {
   const id = readId(c, pathParam(c, 'id'));
   const qn = qInt(c, 'qn', 80, { min: 1 });
   const audio = qBool(c, 'audio', false);
-  const result = await getVideoFile(c.env, id, { qn, audio });
-  return ok(c, result);
+  const download = qBool(c, 'download', false);
+  const meta = await getVideoFile(c.env, id, { qn, audio });
+
+  // 透传 Range（视频拖动进度条必需），B 站 CDN 支持单段 Range
+  const range = c.req.header('Range');
+  const headers: Record<string, string> = {
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-store',
+  };
+  if (range) headers['Range'] = range;
+
+  const upstream = await fetch(meta.url, {
+    headers: {
+      Referer: 'https://www.bilibili.com/',
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      ...(range ? { Range: range } : {}),
+    },
+    redirect: 'follow',
+  });
+
+  if (!upstream.ok && upstream.status !== 206) {
+    throw upstreamError(`上游文件取流失败（HTTP ${upstream.status}）`);
+  }
+
+  const out = new Headers();
+  const contentType = upstream.headers.get('Content-Type') || meta.mimeType || 'application/octet-stream';
+  out.set('Content-Type', contentType);
+  out.set('Accept-Ranges', 'bytes');
+  out.set('Cache-Control', 'no-store');
+
+  const len = upstream.headers.get('Content-Length');
+  if (len) out.set('Content-Length', len);
+  const cr = upstream.headers.get('Content-Range');
+  if (cr) out.set('Content-Range', cr);
+  const etag = upstream.headers.get('ETag');
+  if (etag) out.set('ETag', etag);
+
+  const status = upstream.status === 206 ? 206 : 200;
+  if (status === 200) out.set('Accept-Ranges', 'bytes');
+
+  if (download) {
+    const ext = contentType.includes('audio') ? 'm4a' : 'mp4';
+    const name = `${meta.bvid}_${meta.qualityName}.${ext}`.replace(/[^\w.\-]/g, '_');
+    out.set('Content-Disposition', `attachment; filename="${name}"`);
+  }
+
+  return new Response(upstream.body, { status, headers: out });
 });
 
 video.get('/:id/qualities', async (c) => {
