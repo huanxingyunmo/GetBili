@@ -4,6 +4,7 @@
  *   GET /:id              视频详情
  *   GET /:id/pages        分 P 列表
  *   GET /:id/playurl      播放地址（DASH 音视频流 / durl）
+ *   GET /:id/file         直接可用的视频/音频文件地址（qn= 清晰度；audio=1 音频流）
  *   GET /:id/qualities    可用清晰度
  *   GET /:id/danmaku      弹幕（JSON / XML）
  *   GET /:id/collection   所属合集
@@ -21,6 +22,7 @@ import {
   getAvailableQualities,
   getPlayUrl,
   getVideoDetail,
+  getVideoFile,
   getVideoPages,
   resolveBvid,
   type VideoIdParam,
@@ -98,6 +100,14 @@ video.get('/:id/playurl', async (c) => {
   const qn = qInt(c, 'qn', 80, { min: 1 });
   const { cid } = await resolveCidAndBvid(c, id);
   const result = await getPlayUrl(c.env, id, cid, qn);
+  return ok(c, result);
+});
+
+video.get('/:id/file', async (c) => {
+  const id = readId(c, pathParam(c, 'id'));
+  const qn = qInt(c, 'qn', 80, { min: 1 });
+  const audio = qBool(c, 'audio', false);
+  const result = await getVideoFile(c.env, id, { qn, audio });
   return ok(c, result);
 });
 

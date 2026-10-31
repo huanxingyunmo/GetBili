@@ -582,3 +582,126 @@ export async function getAvailableQualities(
     return [];
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * 直接获取视频文件（2026-10-31 新增）
+ *
+ * 场景：调用方只想要一个能直接 <video src> / 下载的 URL，不想自己解析 DASH。
+ *
+ * 策略：
+ *   1. 先按 qn 请求 playurl；
+ *   2. format=durl（老视频/番剧）→ durl[0].url 即完整音视频合流文件；
+ *   3. format=dash → 返回最佳视频流（best.video ?? dash.video[0]），
+ *      带 ?audio=1 时改返回最佳音频流（音乐场景 / 自行 mux 前的素材）；
+ *   4. B 站直链有 Referer 防盗链，调用方必须带
+ *      Referer: https://www.bilibili.com/ 与正常 UA 才能拿到 200。
+ *
+ * 返回字段：
+ *   { bvid, cid, kind: 'video'|'audio'|'merged', url, backupUrl,
+ *     quality, qualityName, codec, mimeType, width, height, frameRate,
+ *     bandwidth(字节/秒), sizeBytes(仅 durl), timelengthMs, expireNote }
+ */
+export async function getVideoFile(
+  env: Env,
+  id: VideoIdParam,
+  options: { qn?: number; audio?: boolean } = {},
+): Promise<{
+  bvid: string;
+  cid: number;
+  kind: 'video' | 'audio' | 'merged';
+  url: string;
+  backupUrl: string[];
+  quality: number | null;
+  qualityName: string;
+  codec: string | null;
+  mimeType: string | null;
+  width: number | null;
+  height: number | null;
+  frameRate: string | null;
+  bandwidth: number | null;
+  sizeBytes: number | null;
+  timelengthMs: number | null;
+  expireNote: string;
+}> {
+  const qn = options.qn && options.qn > 0 ? options.qn : 80;
+  const { cid } = await resolveCidAndBvidLocal(env, id);
+  const play = await getPlayUrl(env, id, cid, qn);
+
+  // durl：合流文件（音视频一个文件），直接可用
+  if (play.format === 'durl' && play.durl && play.durl.length > 0) {
+    const seg = play.durl[0];
+    return {
+      bvid: play.bvid,
+      cid: play.cid,
+      kind: 'merged',
+      url: seg.url,
+      backupUrl: seg.backupUrl,
+      quality: play.qn,
+      qualityName: play.qualityName,
+      codec: null,
+      mimeType: 'video/mp4',
+      width: null,
+      height: null,
+      frameRate: null,
+      bandwidth: null,
+      sizeBytes: seg.size,
+      timelengthMs: play.timelength,
+      expireNote: 'B 站直链有时效（约 1~2 小时），且需带 Referer: https://www.bilibili.com/ 访问',
+    };
+  }
+
+  if (play.dash) {
+    if (options.audio) {
+      const a = play.best.audio ?? play.dash.audio[0] ?? null;
+      if (!a) throw notFound('该视频没有可用的音频流');
+      return {
+        bvid: play.bvid,
+        cid: play.cid,
+        kind: 'audio',
+        url: a.baseUrl,
+        backupUrl: a.backupUrl,
+        quality: a.id,
+        qualityName: audioQualityName(a.id),
+        codec: a.codecs,
+        mimeType: a.mimeType,
+        width: null,
+        height: null,
+        frameRate: null,
+        bandwidth: a.bandwidth,
+        sizeBytes: null,
+        timelengthMs: play.timelength,
+        expireNote: 'B 站直链有时效（约 1~2 小时），且需带 Referer: https://www.bilibili.com/ 访问',
+      };
+    }
+
+    const v = play.best.video ?? play.dash.video[0] ?? null;
+    if (!v) throw notFound('该视频没有可用的视频流（可能需要登录/大会员）');
+    return {
+      bvid: play.bvid,
+      cid: play.cid,
+      kind: 'video',
+      url: v.baseUrl,
+      backupUrl: v.backupUrl,
+      quality: v.id,
+      qualityName: v.qualityName,
+      codec: v.codecs,
+      mimeType: v.mimeType,
+      width: v.width,
+      height: v.height,
+      frameRate: v.frameRate,
+      bandwidth: v.bandwidth,
+      sizeBytes: null,
+      timelengthMs: play.timelength,
+      expireNote: 'B 站直链有时效（约 1~2 小时），且需带 Referer: https://www.bilibili.com/ 访问',
+    };
+  }
+
+  throw notFound('上游没有返回可用的视频文件地址');
+}
+
+/** 局部封装：复用 routes/video.ts 的 cid 解析逻辑（未传 cid 时回退详情第一 P） */
+async function resolveCidAndBvidLocal(env: Env, id: VideoIdParam): Promise<{ cid: number; bvid: string }> {
+  const bvid = await resolveBvid(env, id);
+  const detail = await getVideoDetail(env, id);
+  return { cid: detail.cid, bvid };
+}
