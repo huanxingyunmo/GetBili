@@ -119,8 +119,11 @@ video.get('/:id/file', async (c) => {
   const download = qBool(c, 'download', false);
   const meta = await getVideoFile(c.env, id, { qn, audio });
 
-  // 透传 Range（视频拖动进度条必需），B 站 CDN 支持单段 Range
-  const range = c.req.header('Range');
+  // 透传 Range（视频拖动进度条必需）。无 Range 时伪装 bytes=0-：
+  // 1) 强迫上游走流式响应，首字节立即可转发；
+  // 2) 避免无 Range 全量回源时响应头迟迟不返回，撞上 Cloudflare ~100s 代理超时 → 502。
+  const clientSentRange = !!c.req.header('Range');
+  const range = clientSentRange ? c.req.header('Range')! : 'bytes=0-';
   const headers: Record<string, string> = {
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'no-store',
@@ -150,11 +153,12 @@ video.get('/:id/file', async (c) => {
   const len = upstream.headers.get('Content-Length');
   if (len) out.set('Content-Length', len);
   const cr = upstream.headers.get('Content-Range');
-  if (cr) out.set('Content-Range', cr);
+  if (cr && clientSentRange) out.set('Content-Range', cr);
   const etag = upstream.headers.get('ETag');
   if (etag) out.set('ETag', etag);
 
-  const status = upstream.status === 206 ? 206 : 200;
+  // 上游 206 但客户端没发 Range（我们伪装的）→ 对客户端表现为 200 完整响应
+  const status = clientSentRange && upstream.status === 206 ? 206 : 200;
   if (status === 200) out.set('Accept-Ranges', 'bytes');
 
   if (download) {
