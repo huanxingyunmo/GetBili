@@ -2,7 +2,7 @@
  * ffmpeg remux 封装（Node 自托管 / Vercel Node runtime）。
  *
  * ffmpeg 可执行文件解析顺序：
- *   1. ffmpeg-static 包内二进制（dependencies 里带了，Vercel/Docker 都有）；
+ *   1. @ffmpeg-installer 包内二进制（按平台装 optionalDependencies，Vercel/Docker 都有）；
  *   2. 回退 PATH 里的 ffmpeg（本地开发自行安装）。
  *
  * 为什么动态 import：src/ 的类型环境是 lib DOM（tsconfig types: []，无 @types/node），
@@ -23,8 +23,8 @@ async function nodeModule(spec: string): Promise<any> {
 
 /**
  * 解析 ffmpeg 可执行文件路径：候选依次探测，首个 spawn 成功者胜出。
- * 候选：环境变量 FFMPEG_PATH > ffmpeg-static 包内二进制（几种定位方式）> PATH 的 ffmpeg。
- * 不 import ffmpeg-static 模块本身 —— 它靠 __dirname 定位二进制，esbuild bundle 后失效。
+ * 候选：环境变量 FFMPEG_PATH > @ffmpeg-installer 各平台目录 > ffmpeg-static > PATH。
+ * 不用包自带的路径解析 —— 它们靠 __dirname 定位，esbuild bundle 后失效，逐候选 spawn 探测最稳。
  */
 async function ffmpegBin(): Promise<string> {
   const pathP: any = await nodeModule('path');
@@ -34,13 +34,18 @@ async function ffmpegBin(): Promise<string> {
   if (typeof process !== 'undefined' && process.env?.FFMPEG_PATH) {
     candidates.push(process.env.FFMPEG_PATH);
   }
-  // ffmpeg-static 的标准布局（Vercel：/var/task/node_modules/...；Docker：/app/node_modules/...）
-  const isWin = typeof process !== 'undefined' && process.platform === 'win32';
-  const baseNames = isWin ? ['ffmpeg.exe'] : ['ffmpeg'];
-  for (const cwdRoot of ['.', '/var/task', '/app']) {
-    for (const name of baseNames) {
-      candidates.push(pathP.join(cwdRoot, 'node_modules', 'ffmpeg-static', name));
+  // 平台标识（Vercel=linux-x64；本地 Windows=win32-x64；Docker alpine=linux-x64 musl 兼容 glibc 版）
+  const platform = typeof process !== 'undefined' && process.platform ? process.platform : 'linux';
+  const isWin = platform === 'win32';
+  const exeName = isWin ? 'ffmpeg.exe' : 'ffmpeg';
+  const roots = ['.', '/var/task', '/app'];
+  for (const root of roots) {
+    // @ffmpeg-installer 布局
+    for (const plat of [platform + '-x64', 'linux-x64', 'win32-x64']) {
+      candidates.push(pathP.join(root, 'node_modules', '@ffmpeg-installer', plat, exeName));
     }
+    // ffmpeg-static 布局（Docker 兼容）
+    candidates.push(pathP.join(root, 'node_modules', 'ffmpeg-static', exeName));
   }
   candidates.push('ffmpeg');
 
