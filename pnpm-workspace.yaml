@@ -2,5 +2,6 @@ allowBuilds:
   esbuild: false
   workerd: false
   sharp: false
+  ffmpeg-static: true
 
 nodeLinker: hoisted

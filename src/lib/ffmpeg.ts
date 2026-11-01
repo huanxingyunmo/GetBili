@@ -1,33 +1,51 @@
 /**
- * ffmpeg remux 封装（仅 Node 自托管运行时可用：Docker 镜像已 apk add ffmpeg；
- * 本地开发需自行安装 ffmpeg）。
+ * ffmpeg remux 封装（Node 自托管 / Vercel Node runtime）。
  *
- * 为什么这样写：src/ 的类型环境是 lib DOM（tsconfig types: []，无 @types/node），
- * 为不污染 Cloudflare Workers / Vercel 的类型面，node: 模块通过运行时动态 import
- * 加载（esbuild 打包时内联，目标运行时是 node20，合法），类型面在本文件内手写。
+ * ffmpeg 可执行文件解析顺序：
+ *   1. ffmpeg-static 包内二进制（dependencies 里带了，Vercel/Docker 都有）；
+ *   2. 回退 PATH 里的 ffmpeg（本地开发自行安装）。
+ *
+ * 为什么动态 import：src/ 的类型环境是 lib DOM（tsconfig types: []，无 @types/node），
+ * 为不污染 Cloudflare Workers 的类型面，node: 模块在运行时以「拼接出的模块名」动态
+ * import（esbuild 打包目标 node20，合法）；模块名拼接也让打包器无法静态分析
+ * （此前字符串常量被 Vercel 构建打包导致整个函数 FUNCTION_INVOCATION_FAILED）。
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-/** 动态加载 node 内建模块（类型面手写，避免引入 @types/node） */
+/** 动态加载模块：'node:' 前缀在函数内拼接，绕开打包器静态分析 */
 async function nodeModule(spec: string): Promise<any> {
-  return await import(/* @vite-ignore */ spec);
+  const mod = 'node' + ':' + spec;
+  return await import(/* @vite-ignore */ mod);
 }
 
-/** ffmpeg 是否可用（可用 resolve，否则 reject） */
+/** 解析 ffmpeg 可执行文件路径：优先 ffmpeg-static，回退 PATH */
+async function ffmpegBin(): Promise<string> {
+  try {
+    const mod: any = await nodeModule('ffmpeg-static');
+    const p = mod?.default ?? mod;
+    if (typeof p === 'string' && p) return p;
+  } catch {
+    /* 包未安装时走 PATH */
+  }
+  return 'ffmpeg';
+}
+
+/** ffmpeg 是否可用（可用 resolve 出二进制路径，否则 reject） */
 export async function ffmpegAvailable(): Promise<string> {
   const { spawn } = await nodeModule('child_process');
+  const bin = await ffmpegBin();
   return new Promise<string>((resolve, reject) => {
-    const child = spawn('ffmpeg', ['-version']);
+    const child = spawn(bin, ['-version']);
     child.on('error', () => reject(new Error('ffmpeg 不可用')));
     child.on('close', (code: number | null) =>
-      code === 0 ? resolve('ffmpeg') : reject(new Error('ffmpeg 不可用')),
+      code === 0 ? resolve(bin) : reject(new Error('ffmpeg 不可用')),
     );
   });
 }
 
 /**
- * 用 ffmpeg -c copy 把分离的 DASH 音视频 remux 成单文件 mp4，返回 Buffer。
+ * 用 ffmpeg -c copy 把分离的 DASH 音视频 remux 成单文件 mp4，返回字节。
  * 不重编码，实测 20MB 素材约 2s。
  */
 export async function mergeDashToMp4(
@@ -35,11 +53,12 @@ export async function mergeDashToMp4(
   audioUrl: string,
   referer: string,
 ): Promise<Uint8Array> {
-  const [{ spawn }, fsP, osP, pathP] = await Promise.all([
+  const [{ spawn }, fsP, osP, pathP, bin] = await Promise.all([
     nodeModule('child_process'),
     nodeModule('fs/promises'),
     nodeModule('os'),
     nodeModule('path'),
+    ffmpegBin(),
   ]);
 
   const dir: string = await fsP.mkdtemp(osP.tmpdir() + pathP.sep + 'getbili-merge-');
@@ -66,7 +85,7 @@ export async function mergeDashToMp4(
     ]);
 
     await new Promise<void>((resolve, reject) => {
-      const child = spawn('ffmpeg', [
+      const child = spawn(bin, [
         '-y', '-loglevel', 'error',
         '-i', vPath, '-i', aPath,
         '-c', 'copy', '-movflags', '+faststart',
@@ -80,14 +99,13 @@ export async function mergeDashToMp4(
       );
     });
 
-    const buf: Uint8Array = await fsP.readFile(outPath);
-    return buf;
+    return await fsP.readFile(outPath);
   } finally {
     await fsP.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-/** path.join 的本地替身（避免引入 path 类型） */
+/** path.join 的本地替身（避免引入 path 类型；Node 在 Windows 也接受 / 分隔） */
 function osPathJoin(...parts: string[]): string {
   return parts.filter(Boolean).join('/');
 }
