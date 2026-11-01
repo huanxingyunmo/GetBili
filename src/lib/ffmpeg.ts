@@ -13,22 +13,51 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+declare const process: { env: Record<string, string | undefined>; platform?: string };
+
 /** 动态加载模块：'node:' 前缀在函数内拼接，绕开打包器静态分析 */
 async function nodeModule(spec: string): Promise<any> {
   const mod = 'node' + ':' + spec;
   return await import(/* @vite-ignore */ mod);
 }
 
-/** 解析 ffmpeg 可执行文件路径：优先 ffmpeg-static，回退 PATH */
+/**
+ * 解析 ffmpeg 可执行文件路径：候选依次探测，首个 spawn 成功者胜出。
+ * 候选：环境变量 FFMPEG_PATH > ffmpeg-static 包内二进制（几种定位方式）> PATH 的 ffmpeg。
+ * 不 import ffmpeg-static 模块本身 —— 它靠 __dirname 定位二进制，esbuild bundle 后失效。
+ */
 async function ffmpegBin(): Promise<string> {
-  try {
-    const mod: any = await nodeModule('ffmpeg-static');
-    const p = mod?.default ?? mod;
-    if (typeof p === 'string' && p) return p;
-  } catch {
-    /* 包未安装时走 PATH */
+  const pathP: any = await nodeModule('path');
+  const fsP: any = await nodeModule('fs/promises');
+  const candidates: string[] = [];
+
+  if (typeof process !== 'undefined' && process.env?.FFMPEG_PATH) {
+    candidates.push(process.env.FFMPEG_PATH);
   }
-  return 'ffmpeg';
+  // ffmpeg-static 的标准布局（Vercel：/var/task/node_modules/...；Docker：/app/node_modules/...）
+  const isWin = typeof process !== 'undefined' && process.platform === 'win32';
+  const baseNames = isWin ? ['ffmpeg.exe'] : ['ffmpeg'];
+  for (const cwdRoot of ['.', '/var/task', '/app']) {
+    for (const name of baseNames) {
+      candidates.push(pathP.join(cwdRoot, 'node_modules', 'ffmpeg-static', name));
+    }
+  }
+  candidates.push('ffmpeg');
+
+  const { spawn } = await nodeModule('child_process');
+  for (const cand of candidates) {
+    const ok = await new Promise<boolean>((resolve) => {
+      try {
+        const child = spawn(cand, ['-version']);
+        child.on('error', () => resolve(false));
+        child.on('close', (code: number | null) => resolve(code === 0));
+      } catch {
+        resolve(false);
+      }
+    });
+    if (ok) return cand;
+  }
+  throw new Error('ffmpeg 不可用');
 }
 
 /** ffmpeg 是否可用（可用 resolve 出二进制路径，否则 reject） */
