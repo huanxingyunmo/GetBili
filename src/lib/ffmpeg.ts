@@ -103,7 +103,8 @@ export async function mergeDashToMp4(
   try {
     const ua =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-    const headers = { Referer: referer, 'User-Agent': ua };
+    // 与 /:id/file 一致：带 Range 触发 CDN 流式返回（无 Range 在部分出口 IP 上会被回 567）
+    const headers = { Referer: referer, 'User-Agent': ua, Range: 'bytes=0-' };
 
     const [vRes, aRes] = await Promise.all([
       fetch(videoUrl, { headers, redirect: 'follow' }),
